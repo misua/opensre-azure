@@ -1,0 +1,2 @@
+[console_scripts]
+opensre = app.cli.__main__:main
