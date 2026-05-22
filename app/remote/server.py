@@ -508,7 +508,6 @@ async def receive_alerts(request: Request, background_tasks: BackgroundTasks) ->
                     severity=resolved_sev,
                     result=result,
                 )
-                _post_result_to_discord(result, resolved_name)
                 _post_result_to_slack(result, resolved_name)
             except Exception:
                 logger.exception("[alertmanager] investigation failed for %s", name)
@@ -587,7 +586,6 @@ async def receive_azure_alert(
                     severity=resolved_sev,
                     result=result,
                 )
-                _post_result_to_discord(result, resolved_name)
                 _post_result_to_slack(result, resolved_name)
             except Exception:
                 logger.exception("[amw] investigation failed for %s", name)
