@@ -2,6 +2,18 @@
 
 Azure integration layer for [opensre](https://github.com/opensre/opensre) — adds Azure Monitor Workspace (AMW) alert ingestion, AKS cluster inspection tools, and improved Discord formatting.
 
+## Flow
+
+```mermaid
+flowchart LR
+    A[Azure Services\nRabbitMQ · Postgres · AKS] -->|metrics| B[Azure Monitor\nWorkspace]
+    B -->|PrometheusRuleGroup fires| C[Action Group]
+    C -->|webhook| D[AMW Bridge\nContainer App]
+    D -->|POST /api/v1/alerts| E[opensre\nrunning locally]
+    E -->|Azure SDK| F[AKS Cluster\n11 tools]
+    E -->|investigation result| G[Discord]
+```
+
 ## What's in here
 
 This repo contains only the additions made to opensre for Azure/AKS support. The original opensre codebase is required as a base.
