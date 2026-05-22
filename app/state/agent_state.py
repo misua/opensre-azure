@@ -198,7 +198,6 @@ class AgentStateModel(StrictConfigModel):
     incident_window_history: list[dict[str, Any]] | None = None
     masking_map: dict[str, str] = Field(default_factory=dict)
     slack_context: dict[str, Any] = Field(default_factory=dict)
-    discord_context: dict[str, Any] = Field(default_factory=dict)
     telegram_context: dict[str, Any] = Field(default_factory=dict)
     whatsapp_context: dict[str, Any] = Field(default_factory=dict)
     openclaw_context: dict[str, Any] = Field(default_factory=dict)

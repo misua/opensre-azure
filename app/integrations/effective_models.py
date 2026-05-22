@@ -81,7 +81,6 @@ class EffectiveIntegrations(StrictConfigModel):
     azure_sql: EffectiveIntegrationEntry | None = None
     bitbucket: EffectiveIntegrationEntry | None = None
     trello: EffectiveIntegrationEntry | None = None
-    discord: EffectiveIntegrationEntry | None = None
     telegram: EffectiveIntegrationEntry | None = None
     whatsapp: EffectiveIntegrationEntry | None = None
     openclaw: EffectiveIntegrationEntry | None = None

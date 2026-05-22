@@ -1,12 +1,12 @@
 # Production Dockerfile for OpenSRE
-# Runs the FastAPI health application (see app/webapp.py).
+# Runs the remote server (app/remote/server.py) — handles alert webhooks and Slack delivery.
 #
 # Usage:
 #   docker build -t opensre:latest .
 #   docker run -p 8000:8000 --env-file .env opensre:latest
 #
 # Health check:
-#   curl http://localhost:8000/health
+#   curl http://localhost:8000/ok
 
 FROM python:3.12-slim
 
@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 ENV PORT=8000
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ok', timeout=5)" || exit 1
 
-CMD ["sh", "-c", "exec uvicorn app.webapp:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "exec uvicorn app.remote.server:app --host 0.0.0.0 --port ${PORT:-8000}"]

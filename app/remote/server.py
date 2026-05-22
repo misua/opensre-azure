@@ -29,7 +29,6 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import (
-    APIRouter,
     BackgroundTasks,
     Depends,
     FastAPI,
@@ -40,8 +39,6 @@ from fastapi import (
     Response,
     status,
 )
-from nacl.exceptions import BadSignatureError
-from nacl.signing import VerifyKey
 from pydantic import BaseModel
 from starlette.responses import JSONResponse, StreamingResponse
 
@@ -68,7 +65,6 @@ INVESTIGATIONS_DIR = Path(
 _AUTH_KEY = os.getenv("OPENSRE_API_KEY")
 _BRIDGE_TOKEN = os.getenv("BRIDGE_TOKEN", "")
 _AUTH_EXEMPT_PATHS = {
-    "/discord/interactions",
     "/api/v1/alerts",
     "/azure-alert",
     "/health/deep",
@@ -173,10 +169,6 @@ app = FastAPI(
     dependencies=[Depends(_check_api_key)],
 )
 
-# Separate router to bypass global _check_api_key, as Discord controls the request format
-discord_router = APIRouter()
-
-
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -203,14 +195,6 @@ class InvestigationMeta(BaseModel):
     filename: str
     created_at: str
     alert_name: str
-
-
-class DiscordInteraction(BaseModel):
-    type: int
-    data: dict[str, Any] | None = None
-    token: str | None = None
-    application_id: str | None = None
-    channel_id: str | None = None
 
 
 class AlertManagerAlert(BaseModel):
@@ -241,225 +225,28 @@ class DeepHealthCheck(BaseModel):
     detail: str
 
 
-# ---------------------------------------------------------------------------
-# Discord helpers
-# ---------------------------------------------------------------------------
-
-_DISCORD_PUBLIC_KEY = os.getenv("DISCORD_PUBLIC_KEY", "")
-_DISCORD_APPLICATION_ID = os.getenv("DISCORD_APPLICATION_ID", "")
-_DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+_SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 
 
-def _verify_discord_signature(body: bytes, signature: str, timestamp: str) -> None:
-    if not _DISCORD_PUBLIC_KEY:
-        raise HTTPException(status_code=500, detail="DISCORD_PUBLIC_KEY not configured")
-    try:
-        VerifyKey(bytes.fromhex(_DISCORD_PUBLIC_KEY)).verify(
-            timestamp.encode() + body, bytes.fromhex(signature)
-        )
-    except (BadSignatureError, ValueError) as exc:
-        raise HTTPException(status_code=401, detail="Invalid request signature") from exc
-
-
-def _discord_post_followup(
-    application_id: str,
-    interaction_token: str,
-    *,
-    content: str = "",
-    embeds: list[dict[str, Any]] | None = None,
-) -> None:
-    """Complete a deferred Discord interaction by posting a followup message."""
-    import httpx
-
-    payload: dict[str, Any] = {}
-    if content:
-        payload["content"] = content
-    if embeds:
-        payload["embeds"] = embeds
-    try:
-        headers: dict[str, str] = {}
-        if _DISCORD_BOT_TOKEN:
-            headers["Authorization"] = f"Bot {_DISCORD_BOT_TOKEN}"
-        resp = httpx.post(
-            f"https://discord.com/api/v10/webhooks/{application_id}/{interaction_token}",
-            json=payload,
-            headers=headers or None,
-            timeout=15.0,
-        )
-        if resp.status_code not in (200, 204):
-            logger.warning("[discord] followup failed: %s %s", resp.status_code, resp.text[:200])
-    except Exception as exc:
-        capture_exception(exc)
-        logger.exception("[discord] followup request failed")
-
-
-_DISCORD_CHANNEL_ID = os.getenv("DISCORD_ALERT_CHANNEL_ID", "")
-
-
-def _post_result_to_discord(result: dict[str, Any], alert_name: str) -> None:
-    """Post investigation result to the alert channel (for AMW/Alertmanager triggered alerts)."""
-    channel_id = _DISCORD_CHANNEL_ID
-    if not channel_id or not _DISCORD_BOT_TOKEN:
+def _post_result_to_slack(result: dict[str, Any], alert_name: str) -> None:
+    if not _SLACK_WEBHOOK_URL:
         return
-    from app.utils.discord_delivery import send_discord_report
+    from app.utils.slack_delivery import send_slack_report
     report = result.get("report") or result.get("problem_md") or ""
     root_cause = result.get("root_cause") or ""
     is_noise = bool(result.get("is_noise"))
-    send_discord_report(
-        report,
-        {
-            "bot_token": _DISCORD_BOT_TOKEN,
-            "channel_id": channel_id,
-            "thread_id": "",
-            "root_cause": root_cause,
-            "alert_name": alert_name,
-            "is_noise": is_noise,
-        },
-    )
+    noise_tag = " [noise]" if is_noise else ""
+    header = f"*{alert_name}{noise_tag}*"
+    if root_cause:
+        header += f"\n*Root cause:* {root_cause}"
+    slack_message = f"{header}\n\n{report}".strip()
+    send_slack_report(slack_message)
 
-
-async def _run_discord_investigation(interaction: DiscordInteraction) -> None:
-    """Background task: run investigation from a Discord slash command and post results."""
-    # Extract the alert value from slash command options
-    options = (interaction.data or {}).get("options", [])
-    alert_raw = next(
-        (str(opt.get("value", "")) for opt in options if opt.get("name") == "alert"), ""
-    )
-
-    # Accept JSON alert payload or plain-text description
-    try:
-        raw_alert: dict[str, Any] = _json.loads(alert_raw)
-    except (_json.JSONDecodeError, ValueError):
-        raw_alert = {"alert_name": alert_raw, "description": alert_raw}
-
-    try:
-        result, resolved_name, _pipeline, _sev = await asyncio.to_thread(
-            _execute_investigation,
-            raw_alert=raw_alert,
-            alert_name=raw_alert.get("alert_name"),
-            pipeline_name=raw_alert.get("pipeline_name"),
-            severity=raw_alert.get("severity"),
-        )
-    except Exception as exc:
-        capture_exception(exc)
-        logger.exception("[discord] background investigation failed")
-        app_id = interaction.application_id or _DISCORD_APPLICATION_ID
-        if app_id and interaction.token:
-            _discord_post_followup(
-                app_id,
-                interaction.token,
-                content="Investigation failed — check server logs for details.",
-            )
-        return
-
-    root_cause = result.get("root_cause") or "N/A"
-    report = result.get("report") or "N/A"
-    is_noise = bool(result.get("is_noise"))
-
-    def _truncate(text: str, limit: int = 1024) -> str:
-        return (text[: limit - 1] + "…") if len(text) > limit else text
-
-    import re as _re
-
-    def _section(text: str, *headings: str) -> str:
-        for h in headings:
-            m = _re.search(rf"##\s+{_re.escape(h)}\s*\n(.*?)(?=\n##|\Z)", text, _re.S | _re.I)
-            if m:
-                return m.group(1).strip()
-        return ""
-
-    def _clean_bullets(text: str, max_items: int, max_chars: int = 900) -> str:
-        """Extract bullet items, shorten each to ~120 chars, return as Discord list."""
-        lines = [l.strip().lstrip("•-* ") for l in text.splitlines() if l.strip()]
-        # Inline code for kubectl commands
-        out = []
-        for line in lines[:max_items]:
-            if line.startswith("kubectl ") or " kubectl " in line:
-                cmd = _re.search(r"(kubectl[^\)]+)", line)
-                if cmd:
-                    line = f"`{cmd.group(1).strip()}`"
-            if len(line) > 120:
-                line = line[:119] + "…"
-            out.append(f"• {line}")
-        result = "\n".join(out)
-        return result[:max_chars] + "…" if len(result) > max_chars else result
-
-    findings_raw = _section(report, "Findings", "Summary", "Evidence")
-    actions_raw  = _section(report, "Recommended Actions", "Actions", "Next Steps")
-
-    status_icon = "🔇" if is_noise else "🚨"
-    color = 0x95A5A6 if is_noise else 0xE74C3C
-
-    # Root cause: first sentence, fall back to first line of report if empty
-    if not root_cause or root_cause.strip() in ("N/A", "Unknown", ""):
-        root_cause = next((l.strip() for l in report.splitlines() if l.strip() and not l.startswith("#")), "")
-    rc = root_cause.split(". ")[0] if len(root_cause) > 200 else root_cause
-    rc = _truncate(rc, 512) or "Investigation complete — see findings below."
-
-    # --- extract quick stats from findings for inline table row ---
-    import os as _os
-    severity = result.get("severity") or "warning"
-    # namespace: prefer env var, then extract from raw alert labels
-    ns = (_os.getenv("AKS_NAMESPACE")
-          or (interaction.data or {}).get("options", [{}])[0].get("value", "")[:20] if hasattr(interaction, "data") else ""
-          or "—")
-    # restarts: parse "restart_count=N" or "N restarts" from findings
-    restart_hint = _re.findall(r"restart[_\s]?count[=:\s]+(\d+)", findings_raw or root_cause, _re.I)
-    if not restart_hint:
-        restart_hint = _re.findall(r"(\d+)\s+restart", findings_raw or root_cause, _re.I)
-    restarts = ", ".join(dict.fromkeys(restart_hint[:3])) if restart_hint else "—"
-
-    fields: list[dict[str, Any]] = [
-        {"name": "Namespace", "value": ns, "inline": True},
-        {"name": "Severity", "value": severity.upper(), "inline": True},
-        {"name": "Restarts", "value": restarts, "inline": True},
-        {"name": "🔎 Root Cause", "value": rc, "inline": False},
-    ]
-    if findings_raw:
-        fields.append({"name": "📋 Findings", "value": _clean_bullets(findings_raw, 4), "inline": False})
-    if actions_raw:
-        fields.append({"name": "✅ Actions", "value": _clean_bullets(actions_raw, 3), "inline": False})
-
-    raw_title = f"{status_icon} {resolved_name}"
-    embed: dict[str, Any] = {
-        "title": _truncate(raw_title, 256),
-        "color": color,
-        "fields": fields,
-        "footer": {"text": "OpenSRE • d-aks-opensre-poc"},
-    }
-
-    # Post via interaction followup webhook (the deferred response requires this)
-    app_id = interaction.application_id or _DISCORD_APPLICATION_ID
-    if app_id and interaction.token:
-        await asyncio.to_thread(_discord_post_followup, app_id, interaction.token, embeds=[embed])
 
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
-
-@discord_router.post("/discord/interactions")
-async def discord_interactions(request: Request, background_tasks: BackgroundTasks) -> Response:
-    body = await request.body()
-    sig = request.headers.get("X-Signature-Ed25519", "")
-    ts = request.headers.get("X-Signature-Timestamp", "")
-    _verify_discord_signature(body, sig, ts)
-
-    interaction = DiscordInteraction.model_validate_json(body)
-
-    if interaction.type == 1:  # PING — Discord endpoint verification
-        return JSONResponse({"type": 1})
-
-    if interaction.type == 2:  # APPLICATION_COMMAND — slash command
-        background_tasks.add_task(_run_discord_investigation, interaction)
-        # type 5 = DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE ("Bot is thinking…")
-        return JSONResponse({"type": 5})
-
-    raise HTTPException(status_code=400, detail="Unsupported interaction type")
-
-
-app.include_router(discord_router)
 
 
 @app.get("/ok")
@@ -722,6 +509,7 @@ async def receive_alerts(request: Request, background_tasks: BackgroundTasks) ->
                     result=result,
                 )
                 _post_result_to_discord(result, resolved_name)
+                _post_result_to_slack(result, resolved_name)
             except Exception:
                 logger.exception("[alertmanager] investigation failed for %s", name)
 
@@ -800,6 +588,7 @@ async def receive_azure_alert(
                     result=result,
                 )
                 _post_result_to_discord(result, resolved_name)
+                _post_result_to_slack(result, resolved_name)
             except Exception:
                 logger.exception("[amw] investigation failed for %s", name)
 

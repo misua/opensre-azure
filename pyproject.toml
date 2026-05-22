@@ -56,8 +56,6 @@ dependencies = [
     "google-auth>=2.0.0,<3.0.0",
     # MongoDB
     "pymongo>=4.6.0,<6.0.0",
-    # Signature verfication for discord
-    "PyNaCl>=1.5.0",
     # MariaDB
     "pymysql>=1.1.0,<2.0.0",
     # ClickHouse (used by first-class SigNoz + ClickHouse integrations)

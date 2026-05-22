@@ -44,7 +44,6 @@ STATE_DEFAULTS: dict[str, Any] = {
     "evidence_entries": [],
     "masking_map": {},
     "slack_context": {},
-    "discord_context": {},
     "telegram_context": {},
     "whatsapp_context": {},
     "openclaw_context": {},

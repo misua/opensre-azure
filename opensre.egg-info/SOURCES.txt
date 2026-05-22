@@ -352,6 +352,10 @@ app/services/env.py
 app/services/lambda_client.py
 app/services/llm_client.py
 app/services/s3_client.py
+app/services/aks/__init__.py
+app/services/aks/aks_k8s_client.py
+app/services/aks/management_client.py
+app/services/aks/utils.py
 app/services/alertmanager/__init__.py
 app/services/alertmanager/client.py
 app/services/argocd/__init__.py
@@ -419,6 +423,17 @@ app/tools/registered_tool.py
 app/tools/registry.py
 app/tools/run_diagnostic_code.py
 app/tools/tool_decorator.py
+app/tools/AKSDeploymentStatusTool/__init__.py
+app/tools/AKSDescribeClusterTool/__init__.py
+app/tools/AKSEventsTool/__init__.py
+app/tools/AKSListClustersTool/__init__.py
+app/tools/AKSListDeploymentsTool/__init__.py
+app/tools/AKSListNamespacesTool/__init__.py
+app/tools/AKSListNodePoolsTool/__init__.py
+app/tools/AKSListPodsTool/__init__.py
+app/tools/AKSNodeHealthTool/__init__.py
+app/tools/AKSNodePoolHealthTool/__init__.py
+app/tools/AKSPodLogsTool/__init__.py
 app/tools/AWSOperationTool/__init__.py
 app/tools/AlertmanagerAlertsTool/__init__.py
 app/tools/AlertmanagerSilencesTool/__init__.py
@@ -566,6 +581,7 @@ app/tools/investigation_registry/actions.py
 app/tools/investigation_registry/models.py
 app/tools/investigation_registry/prioritization.py
 app/tools/utils/__init__.py
+app/tools/utils/aks_workload_helper.py
 app/tools/utils/availability.py
 app/tools/utils/aws_topology_helper.py
 app/tools/utils/code_host_unavailable.py
@@ -589,7 +605,6 @@ app/utils/cfg_helpers.py
 app/utils/coercion.py
 app/utils/config.py
 app/utils/delivery_transport.py
-app/utils/discord_delivery.py
 app/utils/errors.py
 app/utils/ingest_delivery.py
 app/utils/openclaw_delivery.py

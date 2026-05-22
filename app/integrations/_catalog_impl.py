@@ -22,7 +22,6 @@ from app.integrations.config_models import (
     AWSIntegrationConfig,
     CoralogixIntegrationConfig,
     DatadogIntegrationConfig,
-    DiscordBotConfig,
     GrafanaIntegrationConfig,
     HelmIntegrationConfig,
     HoneycombIntegrationConfig,
@@ -528,23 +527,6 @@ def _classify_service_instance(
             return None, None
         if jira_config.base_url and jira_config.email and jira_config.api_token:
             return jira_config.model_dump(), "jira"
-        return None, None
-
-    if key == "discord":
-        try:
-            discord_config = DiscordBotConfig.model_validate(
-                {
-                    "bot_token": credentials.get("bot_token", ""),
-                    "application_id": credentials.get("application_id", ""),
-                    "public_key": credentials.get("public_key", ""),
-                    "default_channel_id": credentials.get("default_channel_id"),
-                }
-            )
-        except Exception as exc:
-            _report_classify_failure(exc, integration=key, record_id=record_id)
-            return None, None
-        if discord_config.bot_token:
-            return discord_config.model_dump(), "discord"
         return None, None
 
     if key == "telegram":
@@ -1441,23 +1423,6 @@ def load_env_integrations() -> list[dict[str, Any]]:
                     jira_config.model_dump(exclude={"integration_id"}),
                 )
             )
-
-    discord_bot_token = resolve_env_credential("DISCORD_BOT_TOKEN")
-    if discord_bot_token:
-        try:
-            discord_config = DiscordBotConfig.model_validate(
-                {
-                    "bot_token": discord_bot_token,
-                    "application_id": os.getenv("DISCORD_APPLICATION_ID", "").strip(),
-                    "public_key": os.getenv("DISCORD_PUBLIC_KEY", "").strip(),
-                    "default_channel_id": os.getenv("DISCORD_DEFAULT_CHANNEL_ID", "").strip()
-                    or None,
-                }
-            )
-        except Exception as exc:
-            _report_env_loader_failure(exc, integration="discord")
-        else:
-            integrations.append(_active_env_record("discord", discord_config.model_dump()))
 
     airflow_config = airflow_config_from_env()
     if airflow_config is not None:
