@@ -240,7 +240,11 @@ def _post_result_to_slack(result: dict[str, Any], alert_name: str) -> None:
     if root_cause:
         header += f"\n*Root cause:* {root_cause}"
     slack_message = f"{header}\n\n{report}".strip()
-    send_slack_report(slack_message)
+    ok, err = send_slack_report(slack_message)
+    if ok:
+        logger.info("[slack] report posted for %s", alert_name)
+    else:
+        logger.warning("[slack] delivery failed for %s: %s", alert_name, err)
 
 
 
