@@ -107,7 +107,14 @@ def generate_report(state: InvestigationState) -> dict:
         if bot_token and channel_id:
             discord_posted, discord_error = send_discord_report(
                 slack_message,
-                {"bot_token": bot_token, "channel_id": channel_id, "thread_id": thread_id},
+                {
+                    "bot_token": bot_token,
+                    "channel_id": channel_id,
+                    "thread_id": thread_id,
+                    "root_cause": state.get("root_cause", ""),
+                    "alert_name": state.get("alert_name") or state.get("pipeline_name") or "Alert",
+                    "is_noise": bool(state.get("is_noise")),
+                },
             )
             logger.debug(
                 "[publish] discord delivery: posted=%s error=%s", discord_posted, discord_error

@@ -293,6 +293,31 @@ def _discord_post_followup(
         logger.exception("[discord] followup request failed")
 
 
+_DISCORD_CHANNEL_ID = os.getenv("DISCORD_ALERT_CHANNEL_ID", "")
+
+
+def _post_result_to_discord(result: dict[str, Any], alert_name: str) -> None:
+    """Post investigation result to the alert channel (for AMW/Alertmanager triggered alerts)."""
+    channel_id = _DISCORD_CHANNEL_ID
+    if not channel_id or not _DISCORD_BOT_TOKEN:
+        return
+    from app.utils.discord_delivery import send_discord_report
+    report = result.get("report") or result.get("problem_md") or ""
+    root_cause = result.get("root_cause") or ""
+    is_noise = bool(result.get("is_noise"))
+    send_discord_report(
+        report,
+        {
+            "bot_token": _DISCORD_BOT_TOKEN,
+            "channel_id": channel_id,
+            "thread_id": "",
+            "root_cause": root_cause,
+            "alert_name": alert_name,
+            "is_noise": is_noise,
+        },
+    )
+
+
 async def _run_discord_investigation(interaction: DiscordInteraction) -> None:
     """Background task: run investigation from a Discord slash command and post results."""
     # Extract the alert value from slash command options
@@ -334,15 +359,71 @@ async def _run_discord_investigation(interaction: DiscordInteraction) -> None:
     def _truncate(text: str, limit: int = 1024) -> str:
         return (text[: limit - 1] + "…") if len(text) > limit else text
 
-    raw_title = f"Investigation Complete: {resolved_name}"
+    import re as _re
+
+    def _section(text: str, *headings: str) -> str:
+        for h in headings:
+            m = _re.search(rf"##\s+{_re.escape(h)}\s*\n(.*?)(?=\n##|\Z)", text, _re.S | _re.I)
+            if m:
+                return m.group(1).strip()
+        return ""
+
+    def _clean_bullets(text: str, max_items: int, max_chars: int = 900) -> str:
+        """Extract bullet items, shorten each to ~120 chars, return as Discord list."""
+        lines = [l.strip().lstrip("•-* ") for l in text.splitlines() if l.strip()]
+        # Inline code for kubectl commands
+        out = []
+        for line in lines[:max_items]:
+            if line.startswith("kubectl ") or " kubectl " in line:
+                cmd = _re.search(r"(kubectl[^\)]+)", line)
+                if cmd:
+                    line = f"`{cmd.group(1).strip()}`"
+            if len(line) > 120:
+                line = line[:119] + "…"
+            out.append(f"• {line}")
+        result = "\n".join(out)
+        return result[:max_chars] + "…" if len(result) > max_chars else result
+
+    findings_raw = _section(report, "Findings", "Summary", "Evidence")
+    actions_raw  = _section(report, "Recommended Actions", "Actions", "Next Steps")
+
+    status_icon = "🔇" if is_noise else "🚨"
+    color = 0x95A5A6 if is_noise else 0xE74C3C
+
+    # Root cause: first sentence only if too long
+    rc = root_cause.split(". ")[0] if len(root_cause) > 200 else root_cause
+    rc = _truncate(rc, 512)
+
+    # --- extract quick stats from findings for inline table row ---
+    import os as _os
+    severity = result.get("severity") or "warning"
+    # namespace: prefer env var, then extract from raw alert labels
+    ns = (_os.getenv("AKS_NAMESPACE")
+          or (interaction.data or {}).get("options", [{}])[0].get("value", "")[:20] if hasattr(interaction, "data") else ""
+          or "—")
+    # restarts: parse "restart_count=N" or "N restarts" from findings
+    restart_hint = _re.findall(r"restart[_\s]?count[=:\s]+(\d+)", findings_raw or root_cause, _re.I)
+    if not restart_hint:
+        restart_hint = _re.findall(r"(\d+)\s+restart", findings_raw or root_cause, _re.I)
+    restarts = ", ".join(dict.fromkeys(restart_hint[:3])) if restart_hint else "—"
+
+    fields: list[dict[str, Any]] = [
+        {"name": "Namespace", "value": ns, "inline": True},
+        {"name": "Severity", "value": severity.upper(), "inline": True},
+        {"name": "Restarts", "value": restarts, "inline": True},
+        {"name": "Root Cause", "value": rc, "inline": False},
+    ]
+    if findings_raw:
+        fields.append({"name": "Key Findings", "value": _clean_bullets(findings_raw, 4), "inline": False})
+    if actions_raw:
+        fields.append({"name": "Next Steps", "value": _clean_bullets(actions_raw, 3), "inline": False})
+
+    raw_title = f"{status_icon} {resolved_name}"
     embed: dict[str, Any] = {
         "title": _truncate(raw_title, 256),
-        "color": 0x95A5A6 if is_noise else 0xE74C3C,
-        "fields": [
-            {"name": "Root Cause", "value": _truncate(root_cause), "inline": False},
-            {"name": "Report", "value": _truncate(report), "inline": False},
-        ],
-        "footer": {"text": "OpenSRE Investigation"},
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "OpenSRE • d-aks-opensre-poc"},
     }
 
     # Post via interaction followup webhook (the deferred response requires this)
@@ -638,6 +719,7 @@ async def receive_alerts(request: Request, background_tasks: BackgroundTasks) ->
                     severity=resolved_sev,
                     result=result,
                 )
+                _post_result_to_discord(result, resolved_name)
             except Exception:
                 logger.exception("[alertmanager] investigation failed for %s", name)
 
@@ -715,6 +797,7 @@ async def receive_azure_alert(
                     severity=resolved_sev,
                     result=result,
                 )
+                _post_result_to_discord(result, resolved_name)
             except Exception:
                 logger.exception("[amw] investigation failed for %s", name)
 

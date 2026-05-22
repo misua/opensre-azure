@@ -16,6 +16,7 @@ from app.integrations.airflow import (
 from app.integrations.azure_sql import build_azure_sql_config
 from app.integrations.betterstack import build_betterstack_config
 from app.integrations.config_models import (
+    AKSIntegrationConfig,
     AlertmanagerIntegrationConfig,
     ArgoCDIntegrationConfig,
     AWSIntegrationConfig,
@@ -246,6 +247,30 @@ def _classify_service_instance(
                 AWSIntegrationConfig.model_validate(raw_config).model_dump(exclude_none=True),
                 "aws",
             )
+        except Exception as exc:
+            _report_classify_failure(exc, integration=key, record_id=record_id)
+            return None, None
+
+    if key == "aks":
+        raw_aks: dict[str, Any] = {
+            "subscription_id": credentials.get("subscription_id", ""),
+            "resource_group": credentials.get("resource_group", ""),
+            "cluster_name": credentials.get("cluster_name", ""),
+            "namespace": credentials.get("namespace", ""),
+            "integration_id": record_id,
+        }
+        if credentials.get("credentials"):
+            raw_aks["credentials"] = credentials["credentials"]
+        elif credentials.get("tenant_id") and credentials.get("client_id") and credentials.get("client_secret"):
+            raw_aks["credentials"] = {
+                "tenant_id": credentials["tenant_id"],
+                "client_id": credentials["client_id"],
+                "client_secret": credentials["client_secret"],
+            }
+        try:
+            config_dict = AKSIntegrationConfig.model_validate(raw_aks).model_dump(exclude_none=True)
+            config_dict["connection_verified"] = True
+            return config_dict, "aks"
         except Exception as exc:
             _report_classify_failure(exc, integration=key, record_id=record_id)
             return None, None
@@ -1159,6 +1184,27 @@ def load_env_integrations() -> list[dict[str, Any]]:
                     },
                 )
             )
+
+    aks_sub = (os.getenv("AKS_SUBSCRIPTION_ID") or os.getenv("AZURE_SUBSCRIPTION_ID") or "").strip()
+    aks_rg = os.getenv("AKS_RESOURCE_GROUP", "").strip()
+    aks_cluster = os.getenv("AKS_CLUSTER_NAME", "").strip()
+    if aks_sub and aks_rg and aks_cluster:
+        aks_creds: dict[str, Any] = {
+            "subscription_id": aks_sub,
+            "resource_group": aks_rg,
+            "cluster_name": aks_cluster,
+            "namespace": os.getenv("AKS_NAMESPACE", "").strip(),
+        }
+        aks_tenant = os.getenv("AZURE_TENANT_ID", "").strip()
+        aks_client_id = os.getenv("AZURE_CLIENT_ID", "").strip()
+        aks_client_secret = os.getenv("AZURE_CLIENT_SECRET", "").strip()
+        if aks_tenant and aks_client_id and aks_client_secret:
+            aks_creds["credentials"] = {
+                "tenant_id": aks_tenant,
+                "client_id": aks_client_id,
+                "client_secret": aks_client_secret,
+            }
+        integrations.append(_active_env_record("aks", aks_creds))
 
     github_mode = os.getenv("GITHUB_MCP_MODE", "streamable-http").strip() or "streamable-http"
     github_url = os.getenv("GITHUB_MCP_URL", "").strip()

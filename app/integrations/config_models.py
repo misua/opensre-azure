@@ -109,6 +109,25 @@ class CoralogixIntegrationConfig(StrictConfigModel):
 # ---------------------------------------------------------------------------
 
 
+class AzureStaticCredentials(StrictConfigModel):
+    """Azure Service Principal credentials."""
+
+    tenant_id: str
+    client_id: str
+    client_secret: str
+
+
+class AKSIntegrationConfig(StrictConfigModel):
+    """Normalized AKS integration config supporting DefaultAzureCredential or explicit SP."""
+
+    subscription_id: str = ""
+    resource_group: str = ""
+    cluster_name: str = ""
+    namespace: str = ""
+    credentials: AzureStaticCredentials | None = None
+    integration_id: str = ""
+
+
 class AWSStaticCredentials(StrictConfigModel):
     """Static AWS access key credentials."""
 

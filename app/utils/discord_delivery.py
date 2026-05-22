@@ -105,15 +105,54 @@ _EMBED_TITLE_LIMIT = 256
 _EMBED_DESCRIPTION_LIMIT = 4096
 
 
+def _extract_section(text: str, *headings: str) -> str:
+    import re
+    for h in headings:
+        m = re.search(rf"##\s+{re.escape(h)}\s*\n(.*?)(?=\n##|\Z)", text, re.S | re.I)
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
+def _clean_bullets(text: str, max_items: int = 4, max_chars: int = 900) -> str:
+    import re
+    lines = [l.strip().lstrip("•-* ") for l in text.splitlines() if l.strip()]
+    out = []
+    for line in lines[:max_items]:
+        if "kubectl " in line:
+            cmd = re.search(r"(kubectl[^\)]+)", line)
+            if cmd:
+                line = f"`{cmd.group(1).strip()}`"
+        out.append(f"• {line[:120]}{'…' if len(line) > 120 else ''}")
+    result = "\n".join(out)
+    return result[:max_chars] + "…" if len(result) > max_chars else result
+
+
 def send_discord_report(report: str, discord_ctx: dict[str, Any]) -> tuple[bool, str]:
     channel_id: str = str(discord_ctx.get("channel_id") or "")
     thread_id: str = str(discord_ctx.get("thread_id") or "")
     bot_token: str = str(discord_ctx.get("bot_token") or "")
+
+    root_cause: str = str(discord_ctx.get("root_cause") or "")
+    alert_name: str = str(discord_ctx.get("alert_name") or "Alert")
+    is_noise: bool = bool(discord_ctx.get("is_noise"))
+
+    rc = root_cause.split(". ")[0] if len(root_cause) > 200 else root_cause
+    findings_raw = _extract_section(report, "Findings", "Summary", "Evidence")
+    actions_raw = _extract_section(report, "Recommended Actions", "Actions", "Next Steps")
+
+    status_icon = "🔇" if is_noise else "🚨"
+    fields = [{"name": "Root Cause", "value": truncate(rc or report[:200], 512, suffix="…"), "inline": False}]
+    if findings_raw:
+        fields.append({"name": "Key Findings", "value": _clean_bullets(findings_raw, 4), "inline": False})
+    if actions_raw:
+        fields.append({"name": "Next Steps", "value": _clean_bullets(actions_raw, 3), "inline": False})
+
     embed = {
-        "title": truncate("Investigation Complete", _EMBED_TITLE_LIMIT, suffix="…"),
-        "color": 15158332,
-        "description": truncate(report, _EMBED_DESCRIPTION_LIMIT, suffix="…"),
-        "footer": {"text": "OpenSRE Investigation"},
+        "title": truncate(f"{status_icon} {alert_name}", _EMBED_TITLE_LIMIT, suffix="…"),
+        "color": 0x95A5A6 if is_noise else 0xE74C3C,
+        "fields": fields,
+        "footer": {"text": "OpenSRE • d-aks-opensre-poc"},
     }
     target = thread_id if thread_id else channel_id
     post_message_success, error, _ = post_discord_message(target, [embed], bot_token)
