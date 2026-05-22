@@ -14,7 +14,7 @@ from __future__ import annotations
 
 def aks_available_or_backend(sources: dict[str, dict]) -> bool:
     """Available when AKS integration is configured OR a fixture backend is injected."""
-    aks = sources.get("aks", {})
+    aks = sources.get("aks") or sources.get("aks_core") or {}
     return bool(aks.get("connection_verified") or aks.get("_backend"))
 
 

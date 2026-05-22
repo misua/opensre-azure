@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
         "Checking observed vs desired generation",
         "Inspecting deployment conditions after an alert",
     ],
-    requires=["cluster_name"],
+    requires=["cluster_name", "namespace"],
     input_schema={
         "type": "object",
         "properties": {

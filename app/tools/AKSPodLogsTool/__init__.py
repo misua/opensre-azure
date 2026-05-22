@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
         "Inspecting application errors after a restart",
         "Fetching broker or consumer logs during an incident",
     ],
-    requires=["cluster_name"],
+    requires=["cluster_name", "namespace"],
     input_schema={
         "type": "object",
         "properties": {

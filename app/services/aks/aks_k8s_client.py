@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import tempfile
 import weakref
+from functools import lru_cache
 from typing import Any
 
 from kubernetes import client as k8s_client
@@ -33,6 +34,31 @@ def _build_azure_credential(credentials: dict[str, Any] | None) -> Any:
             client_secret=sp["client_secret"],
         )
     return DefaultAzureCredential()
+
+
+@lru_cache(maxsize=4)
+def _cached_kubeconfig(cluster_name: str, resource_group: str, subscription_id: str,
+                       credentials_key: str | None) -> bytes:
+    """Fetch kubeconfig once per unique cluster — cached for the process lifetime."""
+    from azure.mgmt.containerservice import ContainerServiceClient
+    from azure.core.pipeline.policies import RetryPolicy
+    creds = None
+    if credentials_key:
+        import json
+        creds = json.loads(credentials_key)
+    credential = _build_azure_credential(creds)
+    mgmt_client = ContainerServiceClient(
+        credential, subscription_id, retry_policy=RetryPolicy(retry_total=1),
+    )
+    result = mgmt_client.managed_clusters.list_cluster_user_credentials(
+        resource_group_name=resource_group,
+        resource_name=cluster_name,
+        connection_timeout=10,
+        read_timeout=15,
+    )
+    if not result.kubeconfigs:
+        raise RuntimeError(f"No kubeconfigs returned for {cluster_name}")
+    return result.kubeconfigs[0].value
 
 
 def build_k8s_clients(
@@ -59,23 +85,9 @@ def build_k8s_clients(
     Raises:
         RuntimeError: If cluster credentials cannot be fetched.
     """
-    from azure.mgmt.containerservice import ContainerServiceClient
-
-    credential = _build_azure_credential(credentials)
-
-    mgmt_client = ContainerServiceClient(credential, subscription_id)
-    cred_result = mgmt_client.managed_clusters.list_cluster_user_credentials(
-        resource_group_name=resource_group,
-        resource_name=cluster_name,
-    )
-
-    kubeconfigs = cred_result.kubeconfigs
-    if not kubeconfigs:
-        raise RuntimeError(
-            f"No kubeconfigs returned for cluster {cluster_name!r} in {resource_group!r}"
-        )
-
-    kubeconfig_bytes = kubeconfigs[0].value
+    import json
+    creds_key = json.dumps(credentials, sort_keys=True) if credentials else None
+    kubeconfig_bytes = _cached_kubeconfig(cluster_name, resource_group, subscription_id, creds_key)
 
     # Write to a temp file so the k8s SDK can load it
     # (load_kube_config_from_dict has limitations with exec-based auth tokens)

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
         "Finding deployments with unavailable replicas",
         "Correlating deployment state with an alert",
     ],
-    requires=["cluster_name"],
+    requires=["cluster_name", "namespace"],
     input_schema={
         "type": "object",
         "properties": {

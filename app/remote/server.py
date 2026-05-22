@@ -390,9 +390,11 @@ async def _run_discord_investigation(interaction: DiscordInteraction) -> None:
     status_icon = "🔇" if is_noise else "🚨"
     color = 0x95A5A6 if is_noise else 0xE74C3C
 
-    # Root cause: first sentence only if too long
+    # Root cause: first sentence, fall back to first line of report if empty
+    if not root_cause or root_cause.strip() in ("N/A", "Unknown", ""):
+        root_cause = next((l.strip() for l in report.splitlines() if l.strip() and not l.startswith("#")), "")
     rc = root_cause.split(". ")[0] if len(root_cause) > 200 else root_cause
-    rc = _truncate(rc, 512)
+    rc = _truncate(rc, 512) or "Investigation complete — see findings below."
 
     # --- extract quick stats from findings for inline table row ---
     import os as _os
@@ -411,12 +413,12 @@ async def _run_discord_investigation(interaction: DiscordInteraction) -> None:
         {"name": "Namespace", "value": ns, "inline": True},
         {"name": "Severity", "value": severity.upper(), "inline": True},
         {"name": "Restarts", "value": restarts, "inline": True},
-        {"name": "Root Cause", "value": rc, "inline": False},
+        {"name": "🔎 Root Cause", "value": rc, "inline": False},
     ]
     if findings_raw:
-        fields.append({"name": "Key Findings", "value": _clean_bullets(findings_raw, 4), "inline": False})
+        fields.append({"name": "📋 Findings", "value": _clean_bullets(findings_raw, 4), "inline": False})
     if actions_raw:
-        fields.append({"name": "Next Steps", "value": _clean_bullets(actions_raw, 3), "inline": False})
+        fields.append({"name": "✅ Actions", "value": _clean_bullets(actions_raw, 3), "inline": False})
 
     raw_title = f"{status_icon} {resolved_name}"
     embed: dict[str, Any] = {

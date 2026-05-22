@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
         "Verifying RBAC and addon configuration",
         "Getting OIDC issuer URL for workload identity troubleshooting",
     ],
-    requires=["cluster_name"],
+    requires=["cluster_name", "namespace"],
     input_schema={"type": "object", "properties": {}, "required": []},
     is_available=aks_available_or_backend,
     extract_params=extract_aks_cluster_params,

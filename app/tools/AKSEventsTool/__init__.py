@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 @tool(
     name="get_aks_events",
-    source="aks",
+    source="aks_core",
     description="Get recent Kubernetes events in an AKS namespace. Filters Warning events by default.",
     use_cases=[
         "Finding OOMKilled, BackOff, FailedMount, or probe failure events",

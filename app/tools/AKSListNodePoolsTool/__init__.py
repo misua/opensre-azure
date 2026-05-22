@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
         "Verifying node pool VM sizes and autoscaling bounds",
         "Identifying stopped or degraded node pools",
     ],
-    requires=["cluster_name"],
+    requires=["cluster_name", "namespace"],
     input_schema={"type": "object", "properties": {}, "required": []},
     is_available=aks_available_or_backend,
     extract_params=extract_aks_cluster_params,

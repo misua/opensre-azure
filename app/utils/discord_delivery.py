@@ -142,11 +142,11 @@ def send_discord_report(report: str, discord_ctx: dict[str, Any]) -> tuple[bool,
     actions_raw = _extract_section(report, "Recommended Actions", "Actions", "Next Steps")
 
     status_icon = "🔇" if is_noise else "🚨"
-    fields = [{"name": "Root Cause", "value": truncate(rc or report[:200], 512, suffix="…"), "inline": False}]
+    fields = [{"name": "🔎 Root Cause", "value": truncate(rc or report[:200], 512, suffix="…"), "inline": False}]
     if findings_raw:
-        fields.append({"name": "Key Findings", "value": _clean_bullets(findings_raw, 4), "inline": False})
+        fields.append({"name": "📋 Findings", "value": _clean_bullets(findings_raw, 4), "inline": False})
     if actions_raw:
-        fields.append({"name": "Next Steps", "value": _clean_bullets(actions_raw, 3), "inline": False})
+        fields.append({"name": "✅ Actions", "value": _clean_bullets(actions_raw, 3), "inline": False})
 
     embed = {
         "title": truncate(f"{status_icon} {alert_name}", _EMBED_TITLE_LIMIT, suffix="…"),

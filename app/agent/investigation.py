@@ -50,8 +50,8 @@ _ALERT_SOURCE_TO_TOOL_SOURCES: dict[str, list[str]] = {
     "openobserve": ["openobserve"],
     "betterstack": ["betterstack"],
     "azure": ["azure", "azure_sql", "aks"],
-    "aks": ["aks"],
-    "azure-monitor-workspace": ["aks"],
+    "aks": ["aks_core"],
+    "azure-monitor-workspace": ["aks_core"],
     "splunk": ["splunk"],
     "signoz": ["signoz"],
 }

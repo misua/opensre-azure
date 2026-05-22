@@ -222,7 +222,7 @@ def _classify_service_instance(
         if grafana_config.is_local:
             return {
                 "endpoint": grafana_config.endpoint,
-                "api_key": "",
+                "api_key": grafana_config.api_key,
                 "integration_id": grafana_config.integration_id,
             }, "grafana_local"
         if grafana_config.api_key and grafana_config.api_key != "local":

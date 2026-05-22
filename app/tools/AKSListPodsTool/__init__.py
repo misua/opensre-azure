@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @tool(
     name="list_aks_pods",
-    source="aks",
+    source="aks_core",
     description="List all pods in an AKS namespace with their status, phase, restart counts, and conditions.",
     use_cases=[
         "Discovering what pods exist before fetching logs",
