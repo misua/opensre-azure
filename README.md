@@ -1,114 +1,107 @@
 # opensre-azure
 
-Azure integration layer for [opensre](https://github.com/opensre/opensre) — adds Azure Monitor Workspace (AMW) alert ingestion, AKS cluster inspection tools, and improved Discord formatting.
+Azure layer for [opensre](https://github.com/opensre/opensre). Plugs AKS clusters into opensre so it can investigate alerts automatically and post findings to Slack.
 
-## Flow
+## How it works
 
-```mermaid
-flowchart LR
-    A[Azure Services\nRabbitMQ · Postgres · AKS] -->|metrics| B[Azure Monitor\nWorkspace]
-    B -->|PrometheusRuleGroup fires| C[Action Group]
-    C -->|webhook| D[AMW Bridge\nContainer App]
-    D -->|POST /api/v1/alerts| E[opensre\nrunning locally]
-    E -->|Azure SDK| F[AKS Cluster\n11 tools]
-    E -->|investigation result| G[Discord]
+```
+chaos happens
+  → metric hits threshold in Azure Monitor Workspace
+  → AMW fires Action Group webhook
+  → opensre (Container App) receives alert
+  → opensre queries AKS + Prometheus to investigate
+  → findings posted to Slack #azure-opensre
 ```
 
-## What's in here
+## What this repo adds
 
-This repo contains only the additions made to opensre for Azure/AKS support. The original opensre codebase is required as a base.
+### Alert ingestion
+Two endpoints on the opensre Container App that accept incoming alerts:
 
----
+| Endpoint | Source |
+|---|---|
+| `POST /azure-alert?token=<BRIDGE_TOKEN>` | Azure Action Group (AMW PrometheusRuleGroup) |
+| `POST /api/v1/alerts` | In-cluster Alertmanager (currently blocked by hub FW — use AMW path) |
+| `POST /investigate` | Manual investigation — POST any alert payload to trigger RCA on demand |
 
-## Alert ingestion
+### AKS tools (11)
+opensre gets eyes inside your cluster. No kubeconfig needed — uses Managed Identity.
 
-### `POST /azure-alert?token=<BRIDGE_TOKEN>`
-Accepts Azure Monitor common alert schema from an Action Group webhook. Translates to AlertManager v2 and queues an investigation.
+| Tool | What it sees |
+|---|---|
+| `list_aks_pods` | Pod phase, restart counts, container states |
+| `list_aks_deployments` | Replica counts, availability |
+| `get_aks_pod_logs` | Container logs |
+| `get_aks_events` | OOMKilled, BackOff, probe failures |
+| `get_aks_node_health` | Node pressure, capacity |
+| `list_aks_namespaces` | All namespaces |
+| `list_aks_clusters` | All clusters in subscription |
+| `describe_aks_cluster` | k8s version, network, addons |
+| `list_aks_node_pools` | VM SKU, count, autoscaling |
+| `get_aks_node_pool_health` | Provisioning state per pool |
+| `get_aks_deployment_status` | Single deployment rollout detail |
 
-### `POST /api/v1/alerts`
-Accepts AlertManager v2 webhook format from in-cluster Alertmanager.
+### AMW Prometheus tool
+opensre can now pull metric time-series from Azure Monitor Workspace during an investigation. This is what lets it say "memory was climbing for 14 minutes before the OOMKill" instead of just "pod was killed."
 
----
+Queries the AMW Prometheus HTTP API directly using Managed Identity — no Grafana needed.
 
-## AMW Bridge
-
-FastAPI translator deployed as an Azure Container App.
-
-**Source:** `bridge/main.py`
-
-Receives → Azure common alert schema  
-Translates → AlertManager v2  
-Forwards → opensre `/api/v1/alerts`
-
-**Env vars:**
 ```
-OPENSRE_WEBHOOK_URL=https://<opensre-host>/api/v1/alerts
-BRIDGE_TOKEN=<shared-secret>
+AMW_PROMETHEUS_ENDPOINT=https://<your-amw>.prometheus.monitor.azure.com
 ```
 
----
+Requires `Monitoring Data Reader` role on the AMW workspace for the Container App's MI. See `docs/amw-prometheus.mdx` for full setup steps.
 
-## AKS Tools (11)
+### Slack delivery
+Every investigation result posts to a Slack channel with sections for root cause, findings, inferred claims, and recommended actions with severity tags.
 
-Auth via `DefaultAzureCredential` — works with `az login`, managed identity, or Service Principal. No kubeconfig needed.
-
-**Env vars:**
 ```
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+```
+
+## Deployment
+
+opensre runs as an **Azure Container App** (not locally). It has unrestricted outbound internet so it can reach Anthropic's API and AMW Prometheus without VNet complications.
+
+```bash
+# Build and push image
+az acr build --registry <your-acr> --image opensre:latest --file Dockerfile .
+
+# Deploy new revision
+az containerapp update \
+  --name opensre \
+  --resource-group <rg> \
+  --image <your-acr>.azurecr.io/opensre:latest \
+  --revision-suffix "v$(date +%Y%m%d%H%M%S)"
+```
+
+## Required env vars
+
+```
+ANTHROPIC_API_KEY=
+SLACK_WEBHOOK_URL=
+BRIDGE_TOKEN=
+
 AKS_SUBSCRIPTION_ID=
 AKS_RESOURCE_GROUP=
 AKS_CLUSTER_NAME=
 AKS_NAMESPACE=
+
+AMW_PROMETHEUS_ENDPOINT=
 ```
 
-### Kubernetes API
-| Tool | What it returns |
-|---|---|
-| `list_aks_pods` | Pod phase, restart count, container states |
-| `list_aks_deployments` | Replica counts, availability |
-| `get_aks_deployment_status` | Single deployment rollout detail |
-| `list_aks_namespaces` | All namespaces |
-| `get_aks_pod_logs` | Container logs (`tail_lines`, `previous`) |
-| `get_aks_events` | Warning events — OOMKilled, BackOff, probe failures |
-| `get_aks_node_health` | Node conditions, capacity, pressure flags |
+## Chaos scenarios
 
-### Azure Management Plane
-| Tool | What it returns |
-|---|---|
-| `list_aks_clusters` | All clusters in subscription |
-| `describe_aks_cluster` | k8s version, network plugin, addons |
-| `list_aks_node_pools` | VM SKU, count, autoscaling, power state |
-| `get_aks_node_pool_health` | Provisioning and power state per pool |
-
-**New files:**
-```
-app/services/aks/          — Azure SDK client + management helpers
-app/tools/AKS*Tool/        — 11 tool packages
-app/tools/utils/aks_*      — param helpers + availability check
-```
-
----
-
-## Discord formatting
-
-Investigations post structured embeds:
-
-```
-🚨  <alert name>
-Namespace | Severity | Restarts    ← inline stats row
-Root Cause
-Key Findings (4 bullets max)
-Next Steps (3 bullets, kubectl in code blocks)
-```
-
-Single post per investigation — no duplicates between slash command response and channel post.
-
----
-
-## Starting locally
+12 pre-built scenarios in `chaos/` covering nginx, postgres, and rabbitmq. Run with:
 
 ```bash
-# starts opensre + cloudflared tunnel, patches Discord + Alertmanager + AMW bridge
-/path/to/scripts/start.sh
+YES=1 ./scripts/chaos-cycle.sh         # all 12
+YES=1 ./scripts/chaos-cycle.sh c1      # single scenario
+YES=1 ./scripts/chaos-cycle.sh extra:postgres-disk-fill  # disk fill demo
+DRY_RUN=1 YES=1 ./scripts/chaos-cycle.sh  # dry run, no sleeps
 ```
 
-See `AZURE.md` for full architecture and setup details.
+## Docs
+
+- `docs/amw-prometheus.mdx` — AMW Prometheus tool setup
+- `docs/aks.mdx` — AKS tools setup
