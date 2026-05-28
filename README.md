@@ -8,16 +8,18 @@ Azure layer for [opensre](https://github.com/opensre/opensre). Plugs AKS cluster
 flowchart TD
     A[💥 Chaos / Real Incident] --> B[AKS Cluster]
     B -->|metrics scraped| C[Azure Monitor Workspace\nAMW Prometheus]
-    C -->|threshold breached| D[PrometheusRuleGroup]
-    D -->|fires webhook| E[Action Group]
-    E -->|POST /azure-alert| F[opensre\nContainer App]
+    C -->|threshold breached| D[PrometheusRuleGroup\n⚙️ custom rules per scenario]
+    D -->|fires webhook| E[Action Group\n⚙️ custom — points to opensre]
+    E -->|POST /azure-alert| F[opensre\nContainer App\n⚙️ custom endpoint + Slack delivery]
 
-    F -->|kubectl via Managed Identity| G[AKS Tools\n11 tools — pods, logs, events, nodes]
+    F -->|kubectl via Managed Identity| G[AKS Tools\n⚙️ custom — 11 tools we built]
     F -->|PromQL via Managed Identity| C
     G --> H{Investigation\nComplete}
     C --> H
     H -->|RCA report| I[Slack\n#azure-opensre]
 ```
+
+> ⚙️ = custom-built for this setup
 
 ## What this repo adds
 
