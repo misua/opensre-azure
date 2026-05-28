@@ -4,13 +4,19 @@ Azure layer for [opensre](https://github.com/opensre/opensre). Plugs AKS cluster
 
 ## How it works
 
-```
-chaos happens
-  → metric hits threshold in Azure Monitor Workspace
-  → AMW fires Action Group webhook
-  → opensre (Container App) receives alert
-  → opensre queries AKS + Prometheus to investigate
-  → findings posted to Slack #azure-opensre
+```mermaid
+flowchart TD
+    A[💥 Chaos / Real Incident] --> B[AKS Cluster]
+    B -->|metrics scraped| C[Azure Monitor Workspace\nAMW Prometheus]
+    C -->|threshold breached| D[PrometheusRuleGroup]
+    D -->|fires webhook| E[Action Group]
+    E -->|POST /azure-alert| F[opensre\nContainer App]
+
+    F -->|kubectl via MI| G[AKS Tools\n11 tools — pods, logs, events, nodes]
+    F -->|PromQL via MI| C
+    G --> H{Investigation\nComplete}
+    C --> H
+    H -->|RCA report| I[Slack\n#azure-opensre]
 ```
 
 ## What this repo adds
