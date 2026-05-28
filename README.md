@@ -12,8 +12,8 @@ flowchart TD
     D -->|fires webhook| E[Action Group]
     E -->|POST /azure-alert| F[opensre\nContainer App]
 
-    F -->|kubectl via MI| G[AKS Tools\n11 tools — pods, logs, events, nodes]
-    F -->|PromQL via MI| C
+    F -->|kubectl via Managed Identity| G[AKS Tools\n11 tools — pods, logs, events, nodes]
+    F -->|PromQL via Managed Identity| C
     G --> H{Investigation\nComplete}
     C --> H
     H -->|RCA report| I[Slack\n#azure-opensre]
