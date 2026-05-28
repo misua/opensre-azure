@@ -1,0 +1,107 @@
+---
+title: "Azure Monitor Workspace (Prometheus)"
+description: "Connect AMW Prometheus so OpenSRE can query pre-incident metric trends during AKS investigations"
+---
+
+OpenSRE queries Azure Monitor Workspace (AMW) Prometheus to retrieve time-series metric data during investigations. This enables RCA reports to include pre-incident trends — e.g. memory climbing before an OOMKill, disk filling before an eviction — rather than only a snapshot of what happened at alert time.
+
+## How It Works
+
+The `query_amw_prometheus` tool calls the AMW Prometheus HTTP API (`/api/v1/query_range`) authenticated with an Azure AD Bearer token obtained via the opensre Container App's system-assigned Managed Identity. No API keys or secrets are required.
+
+The tool defaults to a 30-minute lookback window with 60-second resolution. The LLM decides which PromQL expressions to run based on the alert context.
+
+## Prerequisites
+
+- opensre running as an Azure Container App with a **system-assigned Managed Identity**
+- An **Azure Monitor Workspace** with Prometheus enabled and scraping your AKS cluster
+- The AMW Prometheus query endpoint URL (found in the AMW resource → Prometheus endpoint)
+
+## Setup
+
+### Step 1 — Assign Monitoring Data Reader role
+
+Grant the opensre Container App's MI read access to the AMW workspace:
+
+```bash
+# Get the MI principal ID
+PRINCIPAL_ID=$(az containerapp show \
+  --name <your-containerapp-name> \
+  --resource-group <your-resource-group> \
+  --query identity.principalId -o tsv)
+
+# Get the AMW resource ID
+AMW_ID=$(az resource show \
+  --resource-group <amw-resource-group> \
+  --name <amw-name> \
+  --resource-type Microsoft.Monitor/accounts \
+  --query id -o tsv)
+
+# Assign the role
+az role assignment create \
+  --assignee $PRINCIPAL_ID \
+  --role "Monitoring Data Reader" \
+  --scope $AMW_ID
+```
+
+### Step 2 — Set the environment variable
+
+Add to your `.env`:
+
+```bash
+AMW_PROMETHEUS_ENDPOINT=https://<your-amw-name>.<region>.prometheus.monitor.azure.com
+```
+
+For a Container App deployment, also set it on the app:
+
+```bash
+az containerapp update \
+  --name <your-containerapp-name> \
+  --resource-group <your-resource-group> \
+  --set-env-vars AMW_PROMETHEUS_ENDPOINT=https://<your-amw-name>.<region>.prometheus.monitor.azure.com
+```
+
+### Step 3 — Rebuild and redeploy
+
+```bash
+# Build and push image
+az acr build --registry <your-acr> --image opensre:latest --file Dockerfile .
+
+# Deploy new revision
+az containerapp update \
+  --name <your-containerapp-name> \
+  --resource-group <your-resource-group> \
+  --image <your-acr>.azurecr.io/opensre:latest \
+  --revision-suffix "v$(date +%Y%m%d%H%M%S)"
+```
+
+## Verification
+
+Trigger a chaos scenario or fire a test alert and check the Investigation Trace in the Slack report. You should see `query amw prometheus` in the tool list and metric values (e.g. `kubelet_volume_stats_used_bytes`, `container_memory_working_set_bytes`) cited in the Findings section.
+
+## What Gets Queried
+
+The LLM chooses PromQL expressions based on alert context. Common examples:
+
+| Alert type | Metric queried |
+|---|---|
+| OOMKill / memory pressure | `container_memory_working_set_bytes{namespace="...",pod="..."}` |
+| Disk full / PVC pressure | `kubelet_volume_stats_available_bytes{namespace="..."}` |
+| CPU throttling | `rate(container_cpu_usage_seconds_total{namespace="..."}[5m])` |
+| Pod crash loop | `kube_pod_container_status_restarts_total{namespace="..."}` |
+
+## Networking Notes
+
+- The Container App must have **outbound internet access** to reach the AMW endpoint (it is a public HTTPS endpoint — no VNet integration required).
+- **In-cluster Prometheus** (e.g. kube-prometheus-stack) is **not reachable** from a Container App without VNet integration, as it only has a ClusterIP. AMW Prometheus is the correct target for Container App deployments.
+- The MI token is scoped to `https://prometheus.monitor.azure.com/.default` — no other permissions are granted by this role assignment.
+
+## POC Reference Values (sandbox-devops)
+
+| Resource | Value |
+|---|---|
+| AMW name | `defaultazuremonitorworkspace-cca` |
+| AMW resource group | `defaultresourcegroup-cca` |
+| AMW Prometheus endpoint | `https://defaultazuremonitorworkspace-cca-b0embfatcfa4e9cu.canadacentral.prometheus.monitor.azure.com` |
+| Container App | `opensre` in `d-rg-aks-opensre-poc` |
+| Role assignment scope | AMW resource (not subscription) |
