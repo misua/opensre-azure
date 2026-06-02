@@ -20,25 +20,25 @@ Everything below is custom to this repo — it does not exist in upstream opensr
 
 ```mermaid
 flowchart TD
-    F["⚙️ opensre — Container App<br/>(custom /azure-alert endpoint + Slack delivery)"]
+    F["opensre<br/>(upstream app, deployed as an Azure Container App)"]
 
     subgraph detect["① Something breaks, Azure notices"]
         A["💥 Chaos test or real incident<br/>in the AKS cluster"]
         C["Azure Monitor Workspace<br/>(AMW Prometheus)"]
         D["⚙️ PrometheusRuleGroup<br/>custom alert rule per scenario"]
-        E["⚙️ Action Group<br/>knows how to reach opensre"]
+        E["⚙️ Action Group<br/>Azure's 'what to do when it fires' — here: call opensre's webhook"]
         A -->|"the cluster keeps shipping metrics"| C
         C -->|"a metric crosses its threshold"| D
         D -->|"trips, fires a webhook"| E
     end
 
-    E -->|"②  POSTs the alert to opensre"| F
+    E -->|"② POSTs the alert to our ⚙️ /azure-alert endpoint"| F
 
     subgraph investigate["③ opensre investigates — gathers its own evidence"]
         G["⚙️ 11 AKS tools<br/>(Azure SDK + Managed Identity)"]
         F -.->|"“what is the cluster doing right now?”"| G
         G -.->|"pods, logs, events, node health"| F
-        F -.->|"“what were the metrics doing<br/>before it broke?” — PromQL via MI"| C
+        F -.->|"“what were the metrics doing<br/>before it broke?” via our ⚙️ AMW Prometheus tool"| C
         C -.->|"e.g. memory climbed for 14 min"| F
     end
 
@@ -46,7 +46,7 @@ flowchart TD
     H ==>|"⑤ posts the RCA report"| I["💬 Slack #azure-opensre"]
 ```
 
-> ⚙️ = custom-built for this setup
+> ⚙️ = **we built or configured this** for the Azure setup (the PrometheusRuleGroup, the Action Group, the AKS tools, the `/azure-alert` endpoint, the AMW Prometheus tool). Everything unmarked — **opensre itself**, the AMW workspace, the cluster — is stock opensre or stock Azure.
 
 ## What this repo adds
 
