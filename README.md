@@ -8,10 +8,10 @@ Everything below is custom to this repo — it does not exist in upstream opensr
 
 | Component | Where | What it does |
 |---|---|---|
-| **11 AKS tools** | `app/tools/AKS*` | Cluster eyes via Azure SDK + Managed Identity (no kubeconfig). Workload-plane (pods, deployments, logs, events, nodes, namespaces) + management-plane (clusters, node pools). |
-| **AMW Prometheus query tool** | `app/tools/AMWPrometheusQueryTool` | Pulls metric time-series from Azure Monitor Workspace during an investigation. Azure SDK + Managed Identity. |
-| **`/azure-alert` ingestion** | `app/remote/server.py` | Accepts the Azure Common Alert Schema from an Action Group (the "amw-bridge" logic). Upstream has no such endpoint. |
-| **Slack delivery** | `app/remote/server.py`, `app/delivery/.../report.py` | Posts each investigation result to Slack with sectioned RCA format. Discord delivery removed. |
+| **11 AKS tools** | `app/tools/AKS*` | Let opensre look inside the Kubernetes cluster on its own — no kubeconfig handed to it. It signs in to Azure as itself (Managed Identity) and answers the questions an engineer would ask while debugging: *which pods are crashing, what do their logs say, what events fired, are the nodes healthy* (workload side), plus *what clusters and node pools exist and how are they set up* (management side). |
+| **AMW Prometheus query tool** | `app/tools/AMWPrometheusQueryTool` | Lets opensre look at **metric history**, not just the current snapshot — e.g. *"was memory climbing for 14 minutes before the pod died?"* It queries Azure Monitor Workspace's Prometheus directly (again signing in via Managed Identity). This is the difference between reporting "the pod was killed" and "the pod was killed because memory had been rising steadily." |
+| **`/azure-alert` ingestion** | `app/remote/server.py` | The front door that lets Azure wake opensre up. When an Azure alert fires, Azure POSTs a webhook in its own "common alert schema" — a format opensre doesn't natively understand. This endpoint receives that webhook (guarded by a shared-secret token), translates it into the AlertManager format opensre already speaks, and kicks off an investigation in the background. Without it, an Azure alert would have no way to reach opensre. |
+| **Slack delivery** | `app/remote/server.py`, `app/delivery/.../report.py` | When an investigation finishes, this posts the result to a Slack channel as a readable report — root cause, validated findings, inferred claims, and recommended actions tagged by severity — so a human sees the answer without digging through logs. Replaces opensre's original Discord delivery. |
 
 > **Not ours.** `AzureMonitorLogsTool` and the `AzureSQL*` tools ship with upstream Tracer-Cloud/opensre — they are not part of this Azure layer.
 
