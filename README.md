@@ -19,17 +19,30 @@ Everything below is custom to this repo — it does not exist in upstream opensr
 
 ```mermaid
 flowchart TD
-    A[💥 Chaos / Real Incident] --> B[AKS Cluster]
-    B -->|metrics scraped| C[Azure Monitor Workspace\nAMW Prometheus]
-    C -->|threshold breached| D[PrometheusRuleGroup\n⚙️ custom rules per scenario]
-    D -->|fires webhook| E[Action Group\n⚙️ custom — points to opensre]
-    E -->|POST /azure-alert| F[opensre\nContainer App\n⚙️ custom endpoint + Slack delivery]
+    F["⚙️ opensre — Container App<br/>(custom /azure-alert endpoint + Slack delivery)"]
 
-    F -->|kubectl via Managed Identity| G[AKS Tools\n⚙️ custom — 11 tools we built]
-    F -->|PromQL via Managed Identity| C
-    G --> H{Investigation\nComplete}
-    C --> H
-    H -->|RCA report| I[Slack\n#azure-opensre]
+    subgraph detect["① Something breaks, Azure notices"]
+        A["💥 Chaos test or real incident<br/>in the AKS cluster"]
+        C["Azure Monitor Workspace<br/>(AMW Prometheus)"]
+        D["⚙️ PrometheusRuleGroup<br/>custom alert rule per scenario"]
+        E["⚙️ Action Group<br/>knows how to reach opensre"]
+        A -->|"the cluster keeps shipping metrics"| C
+        C -->|"a metric crosses its threshold"| D
+        D -->|"trips, fires a webhook"| E
+    end
+
+    E -->|"②  POSTs the alert to opensre"| F
+
+    subgraph investigate["③ opensre investigates — gathers its own evidence"]
+        G["⚙️ 11 AKS tools<br/>(Azure SDK + Managed Identity)"]
+        F -.->|"“what is the cluster doing right now?”"| G
+        G -.->|"pods, logs, events, node health"| F
+        F -.->|"“what were the metrics doing<br/>before it broke?” — PromQL via MI"| C
+        C -.->|"e.g. memory climbed for 14 min"| F
+    end
+
+    F ==>|"④ writes up the root cause"| H{"Root cause<br/>identified"}
+    H ==>|"⑤ posts the RCA report"| I["💬 Slack #azure-opensre"]
 ```
 
 > ⚙️ = custom-built for this setup
