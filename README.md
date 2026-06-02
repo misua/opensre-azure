@@ -1,6 +1,19 @@
 # opensre-azure
 
-Azure layer for [opensre](https://github.com/opensre/opensre). Plugs AKS clusters into opensre so it can investigate alerts automatically and post findings to Slack.
+Azure layer on top of [Tracer-Cloud/opensre](https://github.com/Tracer-Cloud/opensre). Plugs AKS clusters into opensre so it can investigate alerts automatically and post findings to Slack.
+
+## What we built (vs upstream Tracer-Cloud/opensre)
+
+Everything below is custom to this repo — it does not exist in upstream opensre:
+
+| Component | Where | What it does |
+|---|---|---|
+| **11 AKS tools** | `app/tools/AKS*` | Cluster eyes via Azure SDK + Managed Identity (no kubeconfig). Workload-plane (pods, deployments, logs, events, nodes, namespaces) + management-plane (clusters, node pools). |
+| **AMW Prometheus query tool** | `app/tools/AMWPrometheusQueryTool` | Pulls metric time-series from Azure Monitor Workspace during an investigation. Azure SDK + Managed Identity. |
+| **`/azure-alert` ingestion** | `app/remote/server.py` | Accepts the Azure Common Alert Schema from an Action Group (the "amw-bridge" logic). Upstream has no such endpoint. |
+| **Slack delivery** | `app/remote/server.py`, `app/delivery/.../report.py` | Posts each investigation result to Slack with sectioned RCA format. Discord delivery removed. |
+
+> **Not ours.** `AzureMonitorLogsTool` and the `AzureSQL*` tools ship with upstream Tracer-Cloud/opensre — they are not part of this Azure layer.
 
 ## How it works
 
