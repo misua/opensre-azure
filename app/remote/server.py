@@ -12,6 +12,8 @@ Start with::
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json as _json
 import logging
 import os
@@ -20,6 +22,7 @@ import secrets
 import shutil
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -67,6 +70,7 @@ _BRIDGE_TOKEN = os.getenv("BRIDGE_TOKEN", "")
 _AUTH_EXEMPT_PATHS = {
     "/api/v1/alerts",
     "/azure-alert",
+    "/slack/command",
     "/health/deep",
     "/ok",
     "/version",
@@ -226,20 +230,113 @@ class DeepHealthCheck(BaseModel):
 
 
 _SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+_SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
+# Slash commands must be acked within 3s; Slack keeps response_url valid ~30 min.
+_SLACK_REPLAY_WINDOW_SECONDS = 60 * 5
+
+
+def _verify_slack_signature(body: bytes, timestamp: str, signature: str) -> None:
+    """Verify a Slack request signature (HMAC-SHA256 over ``v0:<ts>:<body>``).
+
+    Raises HTTPException(401) on any mismatch, 500 if the secret is unset.
+    """
+    if not _SLACK_SIGNING_SECRET:
+        raise HTTPException(status_code=500, detail="SLACK_SIGNING_SECRET not configured")
+    # Replay protection — reject stale timestamps.
+    try:
+        if abs(time.time() - int(timestamp)) > _SLACK_REPLAY_WINDOW_SECONDS:
+            raise HTTPException(status_code=401, detail="stale Slack timestamp")
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="invalid Slack timestamp") from exc
+    basestring = b"v0:" + timestamp.encode() + b":" + body
+    expected = "v0=" + hmac.new(
+        _SLACK_SIGNING_SECRET.encode(), basestring, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature or ""):
+        raise HTTPException(status_code=401, detail="invalid Slack signature")
+
+
+def _post_to_slack_response_url(response_url: str, text: str, *, in_channel: bool = True) -> None:
+    """Deliver an investigation result back to a Slack slash-command response_url."""
+    payload = _json.dumps(
+        {"response_type": "in_channel" if in_channel else "ephemeral", "text": text}
+    ).encode()
+    req = urllib.request.Request(
+        response_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status not in (200, 204):
+                logger.warning("[slack-cmd] response_url returned %s", resp.status)
+    except Exception as exc:
+        capture_exception(exc)
+        logger.exception("[slack-cmd] response_url post failed")
+
+
+_SLACK_REPORT_SEP = "──────────────────────────────────"
+
+
+def _cap_bullets(section: str, n: int) -> str:
+    """Keep a section header plus its first ``n`` top-level ``•`` bullets.
+
+    Bullets may span multiple lines (e.g. action / command / expected), so we
+    cut at the (n+1)-th bullet rather than slicing raw lines.
+    """
+    out: list[str] = []
+    count = 0
+    for line in section.split("\n"):
+        if line.lstrip().startswith("•"):
+            count += 1
+            if count > n:
+                break
+        out.append(line)
+    return "\n".join(out).rstrip()
+
+
+def _terse_slack_from_result(result: dict[str, Any], alert_name: str) -> str:
+    """Build a compact Slack message for the interactive slash-command path.
+
+    Keeps root cause + top-3 findings + top-3 recommended actions; drops the
+    noisier sections (inferred claims, provenance, investigation trace, cited
+    evidence) that make the full alert-path report hard to read in a chat reply.
+    """
+    report = result.get("report") or result.get("problem_md") or ""
+    blocks = [b.strip() for b in report.split(_SLACK_REPORT_SEP)]
+    root_cause = (result.get("root_cause") or "").strip()
+    if not root_cause or root_cause.upper() == "N/A":
+        root_cause = blocks[0] if blocks else "N/A"
+
+    def _section(title: str) -> str:
+        for b in blocks:
+            if b.startswith(f"*{title}*"):
+                return b
+        return ""
+
+    noise_tag = " [noise]" if result.get("is_noise") else ""
+    parts = [f"*{alert_name}{noise_tag}*", "", root_cause]
+    findings = _section("Findings")
+    if findings:
+        parts += ["", _cap_bullets(findings, 3)]
+    actions = _section("Recommended Actions")
+    if actions:
+        parts += ["", _cap_bullets(actions, 3)]
+    return "\n".join(parts).strip()
 
 
 def _post_result_to_slack(result: dict[str, Any], alert_name: str) -> None:
     if not _SLACK_WEBHOOK_URL:
         return
+    from app.delivery.publish_findings.formatters.report import _sanitize_for_slack
     from app.utils.slack_delivery import send_slack_report
     report = result.get("report") or result.get("problem_md") or ""
     root_cause = result.get("root_cause") or ""
     is_noise = bool(result.get("is_noise"))
     noise_tag = " [noise]" if is_noise else ""
     header = f"*{alert_name}{noise_tag}*"
-    if root_cause:
-        header += f"\n*Root cause:* {root_cause}"
-    slack_message = f"{header}\n\n{report}".strip()
+    slack_message = _sanitize_for_slack(f"{header}\n\n{report}".strip())
     ok, err = send_slack_report(slack_message)
     if ok:
         logger.info("[slack] report posted for %s", alert_name)
@@ -597,6 +694,85 @@ async def receive_azure_alert(
         background_tasks.add_task(_run, raw_alert, alert_name, pipeline_name, severity)
 
     return {"accepted": len(firing), "skipped": len(alerts) - len(firing), "status": "queued"}
+
+
+@app.post("/slack/command")
+async def receive_slack_command(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> JSONResponse:
+    """Handle a Slack slash command (e.g. ``/investigate <free text or JSON alert>``).
+
+    Verifies the Slack signature, acks within 3s, then runs the investigation in
+    the background and posts the result to the command's ``response_url``.
+    """
+    body = await request.body()
+    _verify_slack_signature(
+        body,
+        request.headers.get("X-Slack-Request-Timestamp", ""),
+        request.headers.get("X-Slack-Signature", ""),
+    )
+
+    form = {k: v[0] for k, v in urllib.parse.parse_qs(body.decode()).items()}
+    text = (form.get("text") or "").strip()
+    response_url = form.get("response_url", "")
+    user_name = form.get("user_name", "someone")
+
+    if not text:
+        return JSONResponse(
+            {
+                "response_type": "ephemeral",
+                "text": "Usage: `/investigate <what to look into>` "
+                "— e.g. `/investigate what pods are having issues`",
+            }
+        )
+
+    # Accept a JSON alert payload, or treat free text as the alert description.
+    try:
+        raw_alert: dict[str, Any] = _json.loads(text)
+        if not isinstance(raw_alert, dict):
+            raise ValueError
+    except (ValueError, _json.JSONDecodeError):
+        raw_alert = {"alert_name": text, "description": text}
+
+    alert_name = raw_alert.get("alert_name") or text
+    severity = raw_alert.get("severity")
+    pipeline_name = raw_alert.get("pipeline_name")
+
+    def _run(raw: dict[str, Any], name: str | None, pipe: str | None, sev: str | None) -> None:
+        try:
+            result, resolved_name, resolved_pipe, resolved_sev = _execute_investigation(
+                raw_alert=raw, alert_name=name, pipeline_name=pipe, severity=sev,
+            )
+            inv_id = _make_id(resolved_name)
+            _save_investigation(
+                inv_id=inv_id,
+                alert_name=resolved_name,
+                pipeline_name=resolved_pipe,
+                severity=resolved_sev,
+                result=result,
+            )
+            if response_url:
+                msg = _terse_slack_from_result(result, resolved_name)
+                _post_to_slack_response_url(response_url, msg)
+        except Exception:
+            logger.exception("[slack-cmd] investigation failed for %s", name)
+            if response_url:
+                _post_to_slack_response_url(
+                    response_url,
+                    f"Investigation failed for `{name}` — check server logs.",
+                    in_channel=False,
+                )
+
+    background_tasks.add_task(_run, raw_alert, alert_name, pipeline_name, severity)
+
+    return JSONResponse(
+        {
+            "response_type": "ephemeral",
+            "text": f":mag: Investigating *{alert_name}* (requested by {user_name})… "
+            "results will post here in ~90s.",
+        }
+    )
 
 
 @app.get("/investigations", response_model=list[InvestigationMeta])
