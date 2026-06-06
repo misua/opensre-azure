@@ -1,8 +1,19 @@
 # Azure Coverage Comparison
 # misua/opensre-azure vs swapnildahiphale/OpenSRE
 # Written: May 2026
+# Updated: Jun 2026 — misua now has VM inspection+monitoring, NSG rules, and Resource Graph (see "Status update" below)
 
 ---
+
+## Status update (Jun 2026)
+
+Three of the Priority-1 gaps below have since been closed in misua/opensre-azure:
+
+- **Virtual Machine inspection + monitoring** (last session): `list_azure_vms`, `get_azure_vm_status` tools + Terraform `vm-targets` module piping VM exporter metrics into the AMW and firing VM PrometheusRuleGroups into opensre. Code done; not yet `terraform apply`'d.
+- **Resource Graph** (this session): `query_azure_resource_graph` tool — cross-subscription KQL.
+- **NSG rules** (this session): `get_nsg_rules` tool — custom + default rules, with NSG discovery.
+
+Still open: Monitor alert rules (deliberately deferred — the upstream `list_monitor_alerts.py` uses the deprecated classic `alert_rules` API that won't return AMW PrometheusRuleGroups; opensre already ingests alerts via the bridge), Cost Management, and AKS pod resource-usage-vs-limits. The tables below are annotated inline with ✅ DONE where superseded.
 
 ## Context
 
@@ -111,11 +122,11 @@ swapnildahiphale covers more Azure resource types that misua completely lacks.
 
 | Capability | misua/opensre-azure | swapnildahiphale | Azure SDK used |
 |---|---|---|---|
-| Virtual Machines (list + describe) | NOT PRESENT | list_vms.py + describe_vm.py | azure-mgmt-compute |
-| Network Security Groups (rules) | NOT PRESENT | get_nsg_rules.py | azure-mgmt-network |
+| Virtual Machines (list + describe) | ✅ list_azure_vms + get_azure_vm_status | list_vms.py + describe_vm.py | azure-mgmt-compute |
+| Network Security Groups (rules) | ✅ get_nsg_rules | get_nsg_rules.py | azure-mgmt-network |
 | Cost Management | NOT PRESENT | query_costs.py | azure-mgmt-costmanagement |
-| Resource Graph (cross-subscription KQL) | NOT PRESENT | query_resource_graph.py | azure-mgmt-resourcegraph |
-| Monitor alert rules | NOT PRESENT | list_monitor_alerts.py | azure-mgmt-monitor |
+| Resource Graph (cross-subscription KQL) | ✅ query_azure_resource_graph | query_resource_graph.py | azure-mgmt-resourcegraph |
+| Monitor alert rules | NOT PRESENT (deferred — see status update) | list_monitor_alerts.py | azure-mgmt-monitor |
 
 ### VM investigation script (describe_vm.py)
 Shows: VM size, OS, network interfaces, disks, power state, instance view.
@@ -160,10 +171,10 @@ swapnildahiphale has no Azure-native alert ingestion.
 |---|---|---|---|
 | azure-identity | YES | YES | DefaultAzureCredential |
 | azure-mgmt-containerservice | YES | YES | AKS cluster/credential API |
-| azure-mgmt-compute | NO | YES | VMs |
-| azure-mgmt-network | NO | YES | NSGs, VNets |
+| azure-mgmt-compute | YES | YES | VMs |
+| azure-mgmt-network | YES | YES | NSGs, VNets |
 | azure-mgmt-costmanagement | NO | YES | Cost analysis |
-| azure-mgmt-resourcegraph | NO | YES | Resource Graph queries |
+| azure-mgmt-resourcegraph | YES | YES | Resource Graph queries |
 | azure-mgmt-monitor | NO | YES | Alert rules |
 | azure-monitor-query | YES (upstream) | YES | Log Analytics KQL |
 | kubernetes | YES (Python SDK) | YES (Python SDK) | K8s API calls |
@@ -208,28 +219,29 @@ Each team can have different integrations, LLM settings, enabled skills.
 These are Python scripts that can be added as new tool classes in app/tools/
 following the exact same pattern as existing AKS tools.
 
-1. VirtualMachinesInspectionTool
-   Source: swapnildahiphale/infrastructure-azure/scripts/list_vms.py + describe_vm.py
-   SDK: azure-mgmt-compute
-   What it adds: VM listing and description — useful when investigating
-                 "is this K8s node actually a healthy Azure VM?"
+1. ✅ DONE — VM tools (list_azure_vms + get_azure_vm_status)
+   SDK: azure-mgmt-compute. Client: app/services/azure_vm/vm_client.py.
+   Went beyond inspection: VM telemetry now flows into the AMW (vm-targets Terraform
+   module) and VM PrometheusRuleGroups fire into opensre via the existing bridge.
 
-2. NetworkSecurityGroupTool
-   Source: swapnildahiphale/infrastructure-azure/scripts/get_nsg_rules.py
-   SDK: azure-mgmt-network
-   What it adds: NSG rule inspection — directly relevant to your "leftover rules
-                 after VM deletion" scenario. Also for "why can't service A reach service B?"
+2. ✅ DONE — get_nsg_rules (app/tools/NetworkSecurityGroupRulesTool)
+   SDK: azure-mgmt-network. Client: app/services/azure_network/network_client.py.
+   Returns custom + DEFAULT security rules (the upstream script omitted defaults),
+   priority-ordered, with NSG discovery when no name is given.
 
-3. ResourceGraphQueryTool
-   Source: swapnildahiphale/infrastructure-azure/scripts/query_resource_graph.py
-   SDK: azure-mgmt-resourcegraph
-   What it adds: Cross-subscription resource queries — find orphaned NICs, stale IPs,
-                 resources that shouldn't exist after a cleanup.
+3. ✅ DONE — query_azure_resource_graph (app/tools/ResourceGraphQueryTool)
+   SDK: azure-mgmt-resourcegraph. Client: app/services/azure_resourcegraph/resourcegraph_client.py.
+   Cross-subscription KQL — orphaned NICs/disks/IPs, inventory. 200-row cap.
 
-4. MonitorAlertRulesTool
+4. DEFERRED — MonitorAlertRulesTool
    Source: swapnildahiphale/infrastructure-azure/scripts/list_monitor_alerts.py
    SDK: azure-mgmt-monitor
-   What it adds: List what alert rules exist — "what is Azure Monitor even watching?"
+   Why deferred: the upstream script uses the deprecated classic `client.alert_rules`
+   API, which does NOT return AMW PrometheusRuleGroups or new-style metric alerts —
+   so against this stack it would list an empty/misleading set. opensre also already
+   RECEIVES the alerts via the Action Group → bridge, so "what alerts exist" is a
+   nice-to-have, not a gap. Revisit only with a rewrite targeting Prometheus rule
+   groups + new metric alerts.
 
 ### Priority 2 — Medium value, medium complexity
 
@@ -263,12 +275,17 @@ following the exact same pattern as existing AKS tools.
 
 ## Adding Priority 1 tools to misua/opensre-azure — implementation notes
 
-All 4 tools follow the same pattern as existing AKS tools:
+The shipped tools follow the same pattern as existing AKS tools (actual paths):
 
-    app/tools/VirtualMachinesInspectionTool/__init__.py
-    app/tools/NetworkSecurityGroupTool/__init__.py
-    app/tools/ResourceGraphQueryTool/__init__.py
-    app/tools/MonitorAlertRulesTool/__init__.py
+    app/tools/AzureVMListTool/__init__.py            ✅ + app/tools/AzureVMInstanceViewTool/
+    app/tools/NetworkSecurityGroupRulesTool/__init__.py  ✅
+    app/tools/ResourceGraphQueryTool/__init__.py     ✅
+    app/tools/MonitorAlertRulesTool/__init__.py      (deferred)
+
+NSG + Resource Graph use source="azure" (already a registered EvidenceSource wired
+into the prompt/investigation maps), so no evidence.py / _catalog_impl.py / config_models
+changes were needed — availability is env-driven (AZURE_SUBSCRIPTION_ID), mirroring
+AMWPrometheusQueryTool. The VM tools use their own source="azure_vm" with a catalog config.
 
 Each needs:
 1. @tool decorator with name, description, use_cases, requires, input_schema
@@ -282,12 +299,24 @@ Auth pattern (same as all existing AKS tools):
     from azure.identity import DefaultAzureCredential
     credential = DefaultAzureCredential()
 
-New packages to add to pyproject.toml:
-    "azure-mgmt-compute>=30.0.0",
-    "azure-mgmt-network>=25.0.0",
-    "azure-mgmt-resourcegraph>=8.0.0",
-    "azure-mgmt-monitor>=6.0.0",
-    "azure-mgmt-costmanagement>=4.0.0",
+Packages in pyproject.toml:
+    "azure-mgmt-compute>=31.0.0",        ✅ added
+    "azure-mgmt-network>=25.0.0",        ✅ added
+    "azure-mgmt-resourcegraph>=8.0.0",   ✅ added
+    "azure-mgmt-monitor>=6.0.0",         (only if MonitorAlertRulesTool is built)
+    "azure-mgmt-costmanagement>=4.0.0",  (only if AzureCostManagementTool is built)
+
+RBAC required before these go live: the opensre Container App's system-assigned
+managed identity currently has only `Monitoring Data Reader` on the AMW. Resource
+Graph and NSG reads need **Reader at subscription scope** (Resource Graph only returns
+resources the identity can read). Grant per subscription you want visibility into:
+
+    PRINCIPAL_ID=$(az containerapp show --name opensre \
+      --resource-group d-rg-aks-opensre-poc --query identity.principalId -o tsv)
+    az role assignment create --assignee "$PRINCIPAL_ID" --role "Reader" \
+      --scope "/subscriptions/<subscription-id>"
+
+Then rebuild the ACR image + `az containerapp update` to ship (standard deploy step).
 
 ---
 
@@ -299,10 +328,10 @@ New packages to add to pyproject.toml:
 | AKS node pool health (scaling, failures) | YES | |
 | AMW Prometheus time-series metric trends | YES | |
 | Azure alert webhook ingestion from Action Groups | YES | |
-| VM inspection (list, describe, health) | | YES |
-| NSG rule inspection (blocking traffic?) | | YES |
-| Orphaned resource detection (Resource Graph) | | YES |
-| Monitor alert rules (what is configured?) | | YES |
+| VM inspection (list, describe, health) | YES (now) | YES |
+| NSG rule inspection (blocking traffic?) | YES (now) | YES |
+| Orphaned resource detection (Resource Graph) | YES (now) | YES |
+| Monitor alert rules (what is configured?) | | YES (misua deferred) |
 | Cost analysis | | YES |
 | Episodic memory (what fixed this last time?) | | YES |
 | Neo4j blast radius analysis | | YES |
