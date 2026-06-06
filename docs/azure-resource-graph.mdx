@@ -1,0 +1,62 @@
+---
+title: "Azure Resource Graph"
+description: "Let OpenSRE run read-only KQL queries across Azure subscriptions to inventory resources and find orphaned ones during an investigation"
+---
+
+OpenSRE can query **Azure Resource Graph** — Azure's cross-subscription KQL inventory engine — to answer "what exists / what's orphaned across Azure?" in a single call. This is the broad discovery counterpart to the resource-specific AKS and VM tools.
+
+## Tool
+
+| Tool | Source | What it does |
+|---|---|---|
+| `query_azure_resource_graph` | `azure` | Runs a read-only KQL query across one or more subscriptions. Returns at most 200 rows, with a `truncated` flag when more matched. |
+
+Authentication uses `DefaultAzureCredential` (managed identity in Azure, `az login` locally) or an explicit Service Principal — the same model as the AKS/VM tools.
+
+## Prerequisites
+
+- The opensre identity granted **Reader** at the **subscription scope** for every subscription you want it to see. Resource Graph only returns resources the identity is allowed to read, so without Reader the results are empty.
+- `AZURE_SUBSCRIPTION_ID` set (used as the default subscription).
+
+## Setup
+
+```bash
+AZURE_SUBSCRIPTION_ID=a975dcf7-5e01-41ed-bb21-7d329568b344
+# Optional — query multiple subscriptions (comma-separated). Defaults to AZURE_SUBSCRIPTION_ID.
+AZURE_RESOURCE_GRAPH_SUBSCRIPTIONS=a975dcf7-...,5801ba0c-...
+```
+
+The tool is available whenever `AZURE_SUBSCRIPTION_ID` is present.
+
+## Example queries
+
+```kql
+// Orphaned NICs — network interfaces with no VM attached
+Resources
+| where type =~ 'microsoft.network/networkinterfaces'
+| where isnull(properties.virtualMachine)
+| project name, resourceGroup, location
+
+// Unattached managed disks (still incurring cost)
+Resources
+| where type =~ 'microsoft.compute/disks'
+| where properties.diskState == 'Unattached'
+| project name, resourceGroup, location, properties.diskSizeGB
+
+// Public IPs not associated with anything
+Resources
+| where type =~ 'microsoft.network/publicipaddresses'
+| where isnull(properties.ipConfiguration)
+| project name, resourceGroup, properties.ipAddress
+
+// VM inventory across subscriptions
+Resources
+| where type =~ 'microsoft.compute/virtualmachines'
+| project name, location, resourceGroup, subscriptionId
+```
+
+## Notes
+
+- **Read-only:** the tool only runs the `resources` query API; it cannot modify anything.
+- **Bounded output:** results are capped at 200 rows to protect the LLM context. If `truncated` is `true`, narrow the query (add `where`/`project`/`limit`).
+- **Scope = RBAC:** breadth of results is exactly what the identity's Reader assignments allow.

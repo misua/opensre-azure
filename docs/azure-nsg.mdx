@@ -1,0 +1,48 @@
+---
+title: "Azure Network Security Groups"
+description: "Let OpenSRE inspect NSG rules to diagnose blocked traffic and leftover firewall rules during an investigation"
+---
+
+OpenSRE can inspect **Azure Network Security Group (NSG)** rules to answer "is a firewall rule blocking traffic to this service or VM?" It surfaces both the custom rules and the platform default rules, priority-ordered, so the effective decision is visible.
+
+## Tool
+
+| Tool | Source | What it does |
+|---|---|---|
+| `get_nsg_rules` | `azure` | With an NSG name: returns its full effective rule set (custom + default), priority-ordered. Without a name: lists the NSGs in a resource group (or subscription) so the agent can pick one. |
+
+Authentication uses `DefaultAzureCredential` (managed identity in Azure, `az login` locally) or an explicit Service Principal — the same model as the AKS/VM tools.
+
+## Prerequisites
+
+- The opensre identity granted **Reader** on the network resource group (or subscription) that holds the NSGs.
+- `AZURE_SUBSCRIPTION_ID` set.
+
+## Setup
+
+```bash
+AZURE_SUBSCRIPTION_ID=a975dcf7-5e01-41ed-bb21-7d329568b344
+```
+
+The tool is available whenever `AZURE_SUBSCRIPTION_ID` is present.
+
+## Usage pattern
+
+1. **Discover** — call `get_nsg_rules` with no `nsg_name` (optionally a `resource_group`) to list NSGs and which subnets/NICs they're attached to.
+2. **Inspect** — call again with `nsg_name` + `resource_group` to get the rules.
+
+Each rule includes: `name`, `priority`, `direction`, `access` (Allow/Deny), `protocol`, source/destination address prefixes, and source/destination port ranges. **Default rules are included** (e.g. `AllowVnetInBound`, `DenyAllInBound`) because those are frequently the rules that actually decide whether traffic flows.
+
+## What gets investigated
+
+| Symptom | How the tool helps |
+|---|---|
+| Service/VM unreachable | Find a `Deny` rule at a lower priority than the `Allow` it should match. |
+| Health probe failing | Confirm the probe's port/source is permitted inbound. |
+| Leftover rule after a deletion | Spot a stale `Deny`/`Allow` left behind when a resource was removed. |
+| No outbound path | Check the subnet NSG permits the required outbound destination. |
+
+## Notes
+
+- **Read-only:** the tool only reads NSG definitions; it never changes rules.
+- **You point it at one NSG.** To find *which* NSG fronts a resource, use `query_azure_resource_graph` first, then read its rules here.
