@@ -30,6 +30,12 @@ def eks_available_or_backend(sources: dict[str, dict]) -> bool:
     return bool(eks.get("connection_verified") or eks.get("_backend"))
 
 
+def azure_vm_available_or_backend(sources: dict[str, dict]) -> bool:
+    """Available when the Azure VM integration is configured OR a fixture backend is injected."""
+    vm = sources.get("azure_vm", {})
+    return bool(vm.get("connection_verified") or vm.get("_backend"))
+
+
 def datadog_available_or_backend(sources: dict[str, dict]) -> bool:
     """Available when real Datadog credentials are present OR a fixture backend is injected.
 

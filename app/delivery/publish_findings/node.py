@@ -60,21 +60,27 @@ def generate_report(state: InvestigationState) -> dict:
     resolved = state.get("resolved_integrations") or {}
     logger.debug("[publish] slack_ctx=%s", slack_ctx)
 
-    report_posted, delivery_error = send_slack_report(
-        slack_message,
-        channel=_channel,
-        thread_ts=thread_ts,
-        access_token=_token,
-        blocks=all_blocks,
-    )
-
-    logger.debug(
-        "[publish] slack delivery: posted=%s channel=%s thread_ts=%s error=%s",
-        report_posted,
-        _channel,
-        thread_ts,
-        delivery_error,
-    )
+    report_posted = False
+    delivery_error: str | None = None
+    # Only post here when alert originated from Slack (has thread to reply to).
+    # Webhook/AMW alerts are delivered by app/remote/server.py:_post_result_to_slack instead.
+    if thread_ts or _channel:
+        report_posted, delivery_error = send_slack_report(
+            slack_message,
+            channel=_channel,
+            thread_ts=thread_ts,
+            access_token=_token,
+            blocks=all_blocks,
+        )
+        logger.debug(
+            "[publish] slack delivery: posted=%s channel=%s thread_ts=%s error=%s",
+            report_posted,
+            _channel,
+            thread_ts,
+            delivery_error,
+        )
+    else:
+        logger.debug("[publish] slack delivery: skipped — no slack context; webhook handler will post")
     if report_posted and _token and _channel and _alert_ts:
         from app.utils.slack_delivery import swap_reaction
 

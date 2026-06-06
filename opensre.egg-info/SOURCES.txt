@@ -360,6 +360,8 @@ app/services/alertmanager/__init__.py
 app/services/alertmanager/client.py
 app/services/argocd/__init__.py
 app/services/argocd/client.py
+app/services/azure_vm/__init__.py
+app/services/azure_vm/vm_client.py
 app/services/coralogix/__init__.py
 app/services/coralogix/client.py
 app/services/datadog/__init__.py
@@ -434,6 +436,7 @@ app/tools/AKSListPodsTool/__init__.py
 app/tools/AKSNodeHealthTool/__init__.py
 app/tools/AKSNodePoolHealthTool/__init__.py
 app/tools/AKSPodLogsTool/__init__.py
+app/tools/AMWPrometheusQueryTool/__init__.py
 app/tools/AWSOperationTool/__init__.py
 app/tools/AlertmanagerAlertsTool/__init__.py
 app/tools/AlertmanagerSilencesTool/__init__.py
@@ -445,6 +448,8 @@ app/tools/AzureSQLResourceStatsTool/__init__.py
 app/tools/AzureSQLServerStatusTool/__init__.py
 app/tools/AzureSQLSlowQueriesTool/__init__.py
 app/tools/AzureSQLWaitStatsTool/__init__.py
+app/tools/AzureVMInstanceViewTool/__init__.py
+app/tools/AzureVMListTool/__init__.py
 app/tools/BetterStackLogsTool/__init__.py
 app/tools/BitbucketCommitsTool/__init__.py
 app/tools/BitbucketFileContentsTool/__init__.py
@@ -584,6 +589,7 @@ app/tools/utils/__init__.py
 app/tools/utils/aks_workload_helper.py
 app/tools/utils/availability.py
 app/tools/utils/aws_topology_helper.py
+app/tools/utils/azure_vm_helper.py
 app/tools/utils/code_host_unavailable.py
 app/tools/utils/compaction.py
 app/tools/utils/data_validation.py
@@ -628,3 +634,4 @@ opensre.egg-info/dependency_links.txt
 opensre.egg-info/entry_points.txt
 opensre.egg-info/requires.txt
 opensre.egg-info/top_level.txt
+tests/tools/test_azure_vm_tools.py

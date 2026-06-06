@@ -130,6 +130,44 @@ def _sanitize_for_slack(text: str) -> str:
     """
     result = re.sub(r"^#{1,6}\s+(.+)$", r"*\1*", text, flags=re.MULTILINE)
     result = re.sub(r"\*\*(.+?)\*\*", r"*\1*", result)
+
+    # Break long [RISK] bullets across lines BEFORE wrapping commands, and add
+    # a blank line after every top-level bullet (Findings, Inferred, Recommended
+    # Actions) so each item is visually distinct in Slack.
+    out_lines: list[str] = []
+    lines = result.split("\n")
+    risk_bullet = re.compile(r"^[•\-]\s+\[(?:LOW|MEDIUM|HIGH)\]")
+    top_bullet = re.compile(r"^[•\-]\s+")
+    for i, line in enumerate(lines):
+        next_line = lines[i + 1] if i + 1 < len(lines) else ""
+        next_is_blank = not next_line.strip()
+        if risk_bullet.match(line):
+            line = re.sub(r" → ", "\n   → ", line)
+            out_lines.append(line)
+            if not next_is_blank:
+                out_lines.append("")
+        elif top_bullet.match(line):
+            out_lines.append(line)
+            if not next_is_blank:
+                out_lines.append("")
+        else:
+            out_lines.append(line)
+    result = "\n".join(out_lines)
+
+    # Wrap bare shell commands in backticks for inline code rendering.
+    # Alternation matches already-wrapped `...` blocks first (left untouched)
+    # so we never double-wrap commands the LLM already formatted.
+    def _wrap_cmd(m: re.Match) -> str:
+        text = m.group(0)
+        if text.startswith("`"):
+            return text  # already wrapped, leave alone
+        return f"`{text.rstrip('.,;')}`"
+
+    result = re.sub(
+        r"`[^`\n]*`|(?<![`\w])\b(?:kubectl|az|helm|crictl|curl|docker)\b[^\n`(;]*",
+        _wrap_cmd,
+        result,
+    )
     return result
 
 
@@ -466,18 +504,19 @@ def format_slack_message(ctx: ReportContext) -> str:
     if top_log:
         conclusion_block += f"`{top_log}`\n"
 
+    _SEP = "\n──────────────────────────────────\n"
+
     validated_lines, non_validated_lines = _render_claim_lines(ctx)
     if validated_lines:
-        # Use a larger markdown heading so that "Findings" stands out as a section.
-        conclusion_block += "\n## Findings\n" + "\n".join(validated_lines) + "\n"
+        conclusion_block += _SEP + "*Findings*\n\n" + "\n".join(validated_lines) + "\n"
     if non_validated_lines:
         conclusion_block += (
-            "\n*Non-Validated Claims (Inferred):*\n" + "\n".join(non_validated_lines) + "\n"
+            _SEP + "*Non-Validated Claims (Inferred)*\n\n" + "\n".join(non_validated_lines) + "\n"
         )
 
     correlation_signal_lines, correlation_driver_lines = _format_correlation_lines(ctx)
     if correlation_signal_lines or correlation_driver_lines:
-        conclusion_block += "\n## Upstream Correlation\n"
+        conclusion_block += _SEP + "*Upstream Correlation*\n"
         if correlation_signal_lines:
             conclusion_block += (
                 "*Correlated signals:*\n" + "\n".join(correlation_signal_lines) + "\n"
@@ -491,21 +530,21 @@ def format_slack_message(ctx: ReportContext) -> str:
     provenance_block = ""
     if provenance_lines:
         provenance_block = (
-            "\n*Provenance:*\n" + _sanitize_for_slack("\n".join(provenance_lines)) + "\n"
+            _SEP + "*Provenance*\n" + _sanitize_for_slack("\n".join(provenance_lines)) + "\n"
         )
 
     remediation_steps = ctx.get("remediation_steps", [])
     remediation_block = ""
     if remediation_steps:
         remediation_block = (
-            "\n## Recommended Actions\n"
+            _SEP + "*Recommended Actions*\n\n"
             + "\n".join(f"• {_sanitize_for_slack(s)}" for s in remediation_steps)
             + "\n"
         )
 
     trace_steps = build_investigation_trace(ctx)
     trace_block = (
-        "\n## Investigation Trace\n" + "\n".join(trace_steps) + "\n" if trace_steps else ""
+        _SEP + "*Investigation Trace*\n" + "\n".join(trace_steps) + "\n" if trace_steps else ""
     )
 
     cited_section = _sanitize_for_slack(format_cited_evidence_section(ctx))
@@ -725,7 +764,7 @@ def build_slack_blocks(ctx: ReportContext) -> list[dict]:
         )
         _add(_mrkdwn_section("\n".join(validated_lines)))
     if non_validated_lines:
-        _add(_mrkdwn_section("*Inferred (not yet validated)*\n" + "\n".join(non_validated_lines)))
+        _add(_mrkdwn_section("*Inferred (not yet validated)*\n\n" + "\n".join(non_validated_lines)))
 
     correlation_signal_lines, correlation_driver_lines = _format_correlation_lines(ctx)
     if correlation_signal_lines or correlation_driver_lines:

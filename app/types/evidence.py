@@ -55,4 +55,5 @@ EvidenceSource = Literal[
     "hermes",
     "aks",
     "aks_core",
+    "azure_vm",
 ]

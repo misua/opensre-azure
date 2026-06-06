@@ -128,7 +128,13 @@ def _build_diagnosis_schema(include_categories: set[str]) -> type[BaseModel]:
             default_factory=list, description="Claims not yet confirmed by evidence"
         )
         remediation_steps: list[str] = Field(
-            default_factory=list, description="Concrete remediation actions in order"
+            default_factory=list,
+            description=(
+                "Ordered remediation actions. Format each as: "
+                "'[RISK] <description> → `<exact command with real names from evidence>` → Expected: <outcome>'. "
+                "RISK is LOW/MEDIUM/HIGH. Use exact namespaces, resource names, and image tags from evidence — "
+                "never placeholders. Omit the command segment only when no single executable command applies."
+            ),
         )
         validity_score: float = Field(
             default=0.0, description="0.0–1.0 confidence in the diagnosis"
@@ -151,6 +157,10 @@ Investigation conclusion:
 {last_text}
 
 Evidence keys collected: {", ".join(evidence.keys()) if evidence else "none"}
+
+For remediation_steps: REWRITE each action from scratch into this exact format — do not copy the original wording verbatim:
+"[RISK] <one sentence: what to do and why> → `<complete shell command with all flags and real resource names from the conclusion above>` → Expected: <observable success condition>"
+RISK = LOW / MEDIUM / HIGH based on blast radius. If the conclusion mentions a command, reproduce it exactly (correct namespace, resource name, flags). If an action has no single shell command (e.g. request a policy exemption), write description and expected outcome only — no arrow or backtick section.
 """
 
     class _DiagnosisPayload(TypedDict):

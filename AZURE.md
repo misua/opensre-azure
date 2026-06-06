@@ -169,6 +169,66 @@ app/tools/
 
 ---
 
+## VM Integration (Windows & Linux)
+
+VMs are monitored through the **same AMW pipeline as AKS** — no new alert path. Each VM
+runs an exporter (node_exporter `:9100` on Linux, windows_exporter `:9182` on Windows)
+scraped by the Azure Monitor Agent into the AMW. VM `PrometheusRuleGroup` alerts fire into
+the existing Action Group → AMW bridge → opensre. See [docs/azure-vm.mdx](docs/azure-vm.mdx)
+for setup.
+
+### Configuration
+
+```env
+AZURE_SUBSCRIPTION_ID=<subscription-id>
+AZURE_VM_RESOURCE_GROUP=<resource-group>   # e.g. d-rg-aks-opensre-poc
+# AMW_PROMETHEUS_ENDPOINT is shared with AKS monitoring
+# AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET — only when az login is unavailable
+```
+
+### Available Tools (2 + shared)
+
+| Tool | What it returns |
+|---|---|
+| `list_azure_vms` | VMs in a resource group/subscription — power state, size, OS type, provisioning state |
+| `get_azure_vm_status` | Instance view of one VM — power/provisioning state, OS, VM agent health, disks, boot diagnostics |
+| `query_amw_prometheus` | (reused) PromQL over `node_*` / `windows_*` exporter series for CPU/mem/disk trends |
+
+### New source files
+
+```
+app/services/azure_vm/
+├── __init__.py
+└── vm_client.py             # VM inventory + instance view via ComputeManagementClient
+
+app/tools/utils/
+└── azure_vm_helper.py       # extract_azure_vm_params
+
+app/tools/
+├── AzureVMListTool/         # list_azure_vms
+└── AzureVMInstanceViewTool/ # get_azure_vm_status
+```
+
+### Modified files
+
+| File | Change |
+|---|---|
+| `app/types/evidence.py` | Added `'azure_vm'` to `EvidenceSource` Literal |
+| `app/integrations/config_models.py` | Added `AzureVMIntegrationConfig` |
+| `app/integrations/_catalog_impl.py` | `azure_vm` env var loading + classification block |
+| `app/agent/investigation.py` / `prompt.py` | `azure_vm` added to `azure` / `azure-monitor-workspace` source maps |
+| `app/tools/utils/availability.py` | `azure_vm_available_or_backend()` |
+| `pyproject.toml` | Added `azure-mgmt-compute` dependency |
+
+### Infrastructure & chaos
+
+| File | Purpose |
+|---|---|
+| `terraform/modules/vm-targets/` | Linux + Windows VMs, exporters, AMA, DCE, Prometheus DCR → AMW, VM alert rules. Toggle with `enable_vm_targets=true`. |
+| `scripts/vm-chaos-cycle.sh` | VM chaos demo (stop / cpu / mem / disk) via `az vm`. **High-Alert** — gated behind `CONFIRM_HIGH_ALERT=1`. |
+
+---
+
 ## Discord Formatting
 
 Investigation results sent to Discord now use structured embeds:

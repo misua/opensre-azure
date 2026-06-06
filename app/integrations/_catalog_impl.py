@@ -20,6 +20,7 @@ from app.integrations.config_models import (
     AlertmanagerIntegrationConfig,
     ArgoCDIntegrationConfig,
     AWSIntegrationConfig,
+    AzureVMIntegrationConfig,
     CoralogixIntegrationConfig,
     DatadogIntegrationConfig,
     GrafanaIntegrationConfig,
@@ -270,6 +271,28 @@ def _classify_service_instance(
             config_dict = AKSIntegrationConfig.model_validate(raw_aks).model_dump(exclude_none=True)
             config_dict["connection_verified"] = True
             return config_dict, "aks"
+        except Exception as exc:
+            _report_classify_failure(exc, integration=key, record_id=record_id)
+            return None, None
+
+    if key == "azure_vm":
+        raw_vm: dict[str, Any] = {
+            "subscription_id": credentials.get("subscription_id", ""),
+            "resource_group": credentials.get("resource_group", ""),
+            "integration_id": record_id,
+        }
+        if credentials.get("credentials"):
+            raw_vm["credentials"] = credentials["credentials"]
+        elif credentials.get("tenant_id") and credentials.get("client_id") and credentials.get("client_secret"):
+            raw_vm["credentials"] = {
+                "tenant_id": credentials["tenant_id"],
+                "client_id": credentials["client_id"],
+                "client_secret": credentials["client_secret"],
+            }
+        try:
+            config_dict = AzureVMIntegrationConfig.model_validate(raw_vm).model_dump(exclude_none=True)
+            config_dict["connection_verified"] = True
+            return config_dict, "azure_vm"
         except Exception as exc:
             _report_classify_failure(exc, integration=key, record_id=record_id)
             return None, None
@@ -1187,6 +1210,24 @@ def load_env_integrations() -> list[dict[str, Any]]:
                 "client_secret": aks_client_secret,
             }
         integrations.append(_active_env_record("aks", aks_creds))
+
+    vm_sub = (os.getenv("AZURE_VM_SUBSCRIPTION_ID") or os.getenv("AZURE_SUBSCRIPTION_ID") or "").strip()
+    vm_rg = os.getenv("AZURE_VM_RESOURCE_GROUP", "").strip()
+    if vm_sub and vm_rg:
+        vm_creds: dict[str, Any] = {
+            "subscription_id": vm_sub,
+            "resource_group": vm_rg,
+        }
+        vm_tenant = os.getenv("AZURE_TENANT_ID", "").strip()
+        vm_client_id = os.getenv("AZURE_CLIENT_ID", "").strip()
+        vm_client_secret = os.getenv("AZURE_CLIENT_SECRET", "").strip()
+        if vm_tenant and vm_client_id and vm_client_secret:
+            vm_creds["credentials"] = {
+                "tenant_id": vm_tenant,
+                "client_id": vm_client_id,
+                "client_secret": vm_client_secret,
+            }
+        integrations.append(_active_env_record("azure_vm", vm_creds))
 
     github_mode = os.getenv("GITHUB_MCP_MODE", "streamable-http").strip() or "streamable-http"
     github_url = os.getenv("GITHUB_MCP_URL", "").strip()

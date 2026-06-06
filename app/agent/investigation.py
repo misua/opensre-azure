@@ -49,9 +49,9 @@ _ALERT_SOURCE_TO_TOOL_SOURCES: dict[str, list[str]] = {
     "opensearch": ["opensearch"],
     "openobserve": ["openobserve"],
     "betterstack": ["betterstack"],
-    "azure": ["azure", "azure_sql", "aks"],
+    "azure": ["azure", "azure_sql", "aks", "azure_vm"],
     "aks": ["aks_core"],
-    "azure-monitor-workspace": ["aks_core"],
+    "azure-monitor-workspace": ["aks_core", "azure_vm"],
     "splunk": ["splunk"],
     "signoz": ["signoz"],
 }

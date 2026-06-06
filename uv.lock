@@ -261,6 +261,20 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-mgmt-compute"
+version = "38.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-mgmt-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4f/ee/a143c8395267aea8d735c5336519ef94eeaa45f235c89c06f417d1d2ce60/azure_mgmt_compute-38.0.0.tar.gz", hash = "sha256:46cb0864f943b88463ed50ad006738023120cf7e53f50f7e4a740ccd5337abaf", size = 468888, upload-time = "2026-04-28T19:44:20.051Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/21/fc/b048242e79b14dd58a1dbede501ea2bfd3a43cac4aad4c0d76a81416a6e8/azure_mgmt_compute-38.0.0-py3-none-any.whl", hash = "sha256:6307edc4d1dabb540dadf11204be7663565d3108e16bcd253494457300cb3609", size = 438192, upload-time = "2026-04-28T19:44:22.124Z" },
+]
+
+[[package]]
 name = "azure-mgmt-containerservice"
 version = "41.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1974,6 +1988,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "anthropic" },
     { name = "azure-identity" },
+    { name = "azure-mgmt-compute" },
     { name = "azure-mgmt-containerservice" },
     { name = "boto3" },
     { name = "click" },
@@ -2072,6 +2087,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "anthropic", specifier = ">=0.77.1" },
     { name = "azure-identity", specifier = ">=1.19.0" },
+    { name = "azure-mgmt-compute", specifier = ">=31.0.0" },
     { name = "azure-mgmt-containerservice", specifier = ">=30.0.0" },
     { name = "boto3", specifier = ">=1.42.88" },
     { name = "boto3-stubs", extras = ["essential"], marker = "extra == 'dev'" },

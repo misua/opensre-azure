@@ -1,0 +1,70 @@
+---
+title: "Azure Virtual Machines (Windows & Linux)"
+description: "Let OpenSRE investigate Azure VM incidents alongside AKS, using VM inventory/status tools plus the shared AMW Prometheus metric trends"
+---
+
+OpenSRE monitors Azure virtual machines (Windows and Linux) through the **same pipeline as AKS**: exporters on each VM are scraped by the Azure Monitor Agent into the Azure Monitor Workspace (AMW), VM `PrometheusRuleGroup` alerts fire into the existing Action Group → AMW bridge → opensre, and the agent investigates using two VM management tools plus the shared `query_amw_prometheus` tool.
+
+## Tools
+
+| Tool | Source | What it does |
+|---|---|---|
+| `list_azure_vms` | `azure_vm` | Lists VMs in a resource group (or the whole subscription) with power state, size, OS type, and provisioning state. |
+| `get_azure_vm_status` | `azure_vm` | Returns the instance view of one VM: power/provisioning state, OS, VM agent health, disk states, boot diagnostics. |
+| `query_amw_prometheus` | `azure` | (reused) PromQL over the AMW — `node_*` (Linux) and `windows_*` (Windows) exporter series. |
+
+Authentication uses `DefaultAzureCredential` (managed identity in Azure, `az login` locally) or an explicit Service Principal — the same model as the AKS tools.
+
+## Prerequisites
+
+- An **Azure Monitor Workspace** receiving Prometheus metrics from the VMs (node_exporter on `:9100`, windows_exporter on `:9182`).
+- The opensre identity granted **Reader** on the VM resource group (for `list_azure_vms` / `get_azure_vm_status`) and **Monitoring Data Reader** on the AMW (already required for `query_amw_prometheus`).
+- `AMW_PROMETHEUS_ENDPOINT` set (shared with AKS monitoring).
+
+## Setup
+
+### Step 1 — Provision the VMs + telemetry
+
+The `vm-targets` Terraform module stands up one Linux + one Windows POC VM, installs the exporters and Azure Monitor Agent, and wires a Prometheus DCR into the AMW:
+
+```bash
+cd terraform
+export TF_VAR_windows_admin_password='<strong-password>'
+terraform apply \
+  -var enable_vm_targets=true \
+  -var "linux_ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
+```
+
+### Step 2 — Configure the integration
+
+Add to opensre's environment:
+
+```bash
+AZURE_SUBSCRIPTION_ID=a975dcf7-5e01-41ed-bb21-7d329568b344
+AZURE_VM_RESOURCE_GROUP=d-rg-aks-opensre-poc
+# AMW_PROMETHEUS_ENDPOINT is already set for AKS monitoring
+```
+
+The integration resolves automatically when `AZURE_SUBSCRIPTION_ID` + `AZURE_VM_RESOURCE_GROUP` are present (see `app/integrations/_catalog_impl.py`). For a Service Principal, also set `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`.
+
+## Verification
+
+1. Confirm metrics landed in the AMW: query `up{job="node"}` and `up{job="windows"}` in Grafana or via `query_amw_prometheus`.
+2. Fire a VM scenario:
+   ```bash
+   CONFIRM_HIGH_ALERT=1 ./scripts/vm-chaos-cycle.sh vm:stop
+   ```
+3. Confirm an RCA is posted to Slack naming the VM, and the Investigation Trace shows `list azure vms` / `get azure vm status`.
+
+## What Gets Investigated
+
+| Alert | Tools used |
+|---|---|
+| `VMDown` | `list_azure_vms` (power state), `get_azure_vm_status` (deallocated vs stopped vs agent down) |
+| `VMHighCPU` / `VMHighMemory` | `query_amw_prometheus` (`node_cpu_seconds_total`, `node_memory_*`, `windows_*`) |
+| `VMDiskFilling` | `query_amw_prometheus` (`node_filesystem_avail_bytes`, `windows_logical_disk_free_bytes`) |
+
+## Notes
+
+- **High-Alert:** `scripts/vm-chaos-cycle.sh` uses `az vm run-command` / `az vm deallocate` and is gated behind `CONFIRM_HIGH_ALERT=1`. opensre's investigation tools are read-only and never run commands on a VM.
+- **Egress:** VM outbound goes through the hub firewall (UDR). The AMW Data Collection Endpoint FQDN, and the exporter package/MSI sources, must be reachable; otherwise stage them in an allowed location.

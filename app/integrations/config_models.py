@@ -128,6 +128,15 @@ class AKSIntegrationConfig(StrictConfigModel):
     integration_id: str = ""
 
 
+class AzureVMIntegrationConfig(StrictConfigModel):
+    """Normalized Azure VM integration config supporting DefaultAzureCredential or explicit SP."""
+
+    subscription_id: str = ""
+    resource_group: str = ""
+    credentials: AzureStaticCredentials | None = None
+    integration_id: str = ""
+
+
 class AWSStaticCredentials(StrictConfigModel):
     """Static AWS access key credentials."""
 

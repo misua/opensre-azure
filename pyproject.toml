@@ -66,6 +66,7 @@ dependencies = [
     "psutil>=5.9",
     "azure-identity>=1.19.0",
     "azure-mgmt-containerservice>=30.0.0",
+    "azure-mgmt-compute>=31.0.0",
 ]
 
 [project.urls]
